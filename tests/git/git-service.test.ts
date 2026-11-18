@@ -82,6 +82,16 @@ describe('GitService', () => {
     expect(await git.diffStat(repo.path, base)).toEqual({ files: 2, insertions: 3, deletions: 0 })
   })
 
+  test('changedFiles preserves non-ASCII file names', async () => {
+    const base = await git.head(repo.path)
+    await git.createBranch(repo.path, 'chinese-paths', 'HEAD')
+    await gitRun(repo.path, ['checkout', 'chinese-paths'])
+    await writeFile(join(repo.path, '设计说明.md'), '内容\n')
+    await git.commitAll(repo.path, 'add chinese file')
+
+    expect(await git.changedFiles(repo.path, base)).toEqual(['设计说明.md'])
+  })
+
   test('merge reports conflict files and mergeAbort leaves clean status', async () => {
     const { stdout: branchOut } = await gitRun(repo.path, ['rev-parse', '--abbrev-ref', 'HEAD'])
     const defaultBranch = branchOut.trim()
@@ -103,6 +113,28 @@ describe('GitService', () => {
     await git.mergeAbort(repo.path)
     const { stdout: status } = await gitRun(repo.path, ['status', '--porcelain'])
     expect(status.trim()).toBe('')
+  })
+
+  test('merge reports non-ASCII conflict paths verbatim', async () => {
+    const { stdout: branchOut } = await gitRun(repo.path, ['rev-parse', '--abbrev-ref', 'HEAD'])
+    const defaultBranch = branchOut.trim()
+
+    await git.createBranch(repo.path, 'feature', 'HEAD')
+
+    await writeFile(join(repo.path, '设计说明.md'), 'main version\n')
+    await git.commitAll(repo.path, 'main change')
+
+    await gitRun(repo.path, ['checkout', 'feature'])
+    await writeFile(join(repo.path, '设计说明.md'), 'feature version\n')
+    await git.commitAll(repo.path, 'feature change')
+
+    await gitRun(repo.path, ['checkout', defaultBranch])
+    const result = await git.merge(repo.path, 'feature')
+
+    expect(result).toEqual({ status: 'conflict', conflicts: ['设计说明.md'] })
+
+    // 清理冲突状态，避免仓库残留未合并文件影响临时目录删除
+    await git.mergeAbort(repo.path)
   })
 
   test('merge reports merged for a clean merge', async () => {

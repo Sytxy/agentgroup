@@ -108,11 +108,10 @@ export class GitService {
 
   /** 与 baseRef 的合并基点到 HEAD 之间变更的文件列表 */
   async changedFiles(cwd: string, baseRef: string): Promise<string[]> {
-    const { stdout } = await this.git(cwd, ['diff', '--name-only', `${baseRef}...HEAD`])
-    return stdout
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line !== '')
+    // -z 以 NUL 分隔且不做 core.quotePath 转义，保证中文/含空格的路径原样返回，
+    // 避免后续基于路径的命令和 UI 拿到转义后的不可用名称。
+    const { stdout } = await this.git(cwd, ['diff', '-z', '--name-only', `${baseRef}...HEAD`])
+    return stdout.split('\0').filter((path) => path !== '')
   }
 
   /** 统计与 baseRef 合并基点之间变更的规模，二进制文件的增删行按 0 计 */
@@ -145,11 +144,9 @@ export class GitService {
       await this.git(cwd, ['merge', '--no-ff', branch])
       return { status: 'merged' }
     } catch (error) {
-      const { stdout } = await this.git(cwd, ['diff', '--name-only', '--diff-filter=U'])
-      const conflicts = stdout
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((line) => line !== '')
+      // 同样使用 -z，保证冲突文件名（中文、空格等）不被转义，且保留原始字符
+      const { stdout } = await this.git(cwd, ['diff', '-z', '--name-only', '--diff-filter=U'])
+      const conflicts = stdout.split('\0').filter((path) => path !== '')
       if (conflicts.length === 0) {
         throw error
       }
