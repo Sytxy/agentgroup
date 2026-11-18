@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
@@ -82,6 +82,37 @@ describe('GitService', () => {
 
     await git.worktreeRemove(repo.path, worktreePath)
     expect(existsSync(worktreePath)).toBe(false)
+  })
+
+  test('deleteBranch force-deletes a branch holding unmerged commits', async () => {
+    const { stdout: branchOut } = await gitRun(repo.path, ['rev-parse', '--abbrev-ref', 'HEAD'])
+    const defaultBranch = branchOut.trim()
+
+    await git.createBranch(repo.path, 'unmerged-branch', 'HEAD')
+    await gitRun(repo.path, ['checkout', 'unmerged-branch'])
+    await writeFile(join(repo.path, 'ONLY-ON-BRANCH.md'), 'branch only\n')
+    await git.commitAll(repo.path, 'branch-only commit')
+    await gitRun(repo.path, ['checkout', defaultBranch])
+
+    // 该提交不在当前分支上，-d 会拒绝删除；deleteBranch 使用 -D 强制删除
+    await git.deleteBranch(repo.path, 'unmerged-branch')
+
+    expect(await git.branchExists(repo.path, 'unmerged-branch')).toBe(false)
+  })
+
+  test('pruneWorktrees clears metadata left by manually deleted worktrees', async () => {
+    const worktreePath = join(repo.root, 'wt-prune')
+    await git.worktreeAdd(repo.path, worktreePath, 'feat-prune', 'HEAD')
+
+    const { stdout: before } = await gitRun(repo.path, ['worktree', 'list', '--porcelain'])
+    expect(before).toContain('wt-prune')
+
+    // 模拟崩溃后目录被外部删除、git 仍保留 worktree 记录的情况
+    await rm(worktreePath, { recursive: true, force: true })
+    await git.pruneWorktrees(repo.path)
+
+    const { stdout: after } = await gitRun(repo.path, ['worktree', 'list', '--porcelain'])
+    expect(after).not.toContain('wt-prune')
   })
 
   test('commitAll returns null when nothing changed', async () => {

@@ -87,6 +87,16 @@ export class GitService {
     await this.git(repo, ['branch', branch, fromRef])
   }
 
+  /** 强制删除分支，包括尚未合并的提交；重试前用它清理任务自己的旧分支 */
+  async deleteBranch(repo: string, branch: string): Promise<void> {
+    await this.git(repo, ['branch', '-D', branch])
+  }
+
+  /** 清理目录已被外部删除、但 git 仍保留记录的 worktree 元数据 */
+  async pruneWorktrees(repo: string): Promise<void> {
+    await this.git(repo, ['worktree', 'prune'])
+  }
+
   /**
    * 返回未被 git 忽略的路径（相对 cwd）。
    *

@@ -7,6 +7,7 @@
  * 结束后提交改动并进入 done/failed/cancelled 之一。合并与 worktree 清理由 Task 12 负责。
  */
 import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { AgentConfig, ChatMessage, Task, TaskStatus } from '../../../shared/types'
@@ -42,6 +43,8 @@ export interface TaskManagerDeps {
   onApproveMerge?: (taskId: string) => Promise<void>
   /** IPC 层放弃任务的转发目标；未注入时对应操作不可用 */
   onAbandon?: (taskId: string) => Promise<void>
+  /** 集成 worktree 路径；默认与 WorkspaceService 的约定一致，崩溃恢复时用于中止残留合并 */
+  integrationWorktreePath?: (workspaceId: string) => string
 }
 
 interface RunningTask {
@@ -65,6 +68,7 @@ export class TaskManager {
   private readonly onTaskDone?: (taskId: string) => void
   private readonly onApproveMerge?: (taskId: string) => Promise<void>
   private readonly onAbandon?: (taskId: string) => Promise<void>
+  private readonly integrationWorktreePath: (workspaceId: string) => string
 
   /** 正在运行的任务，value 持有取消信号与完成 Promise */
   private readonly running = new Map<string, RunningTask>()
@@ -88,11 +92,74 @@ export class TaskManager {
     this.onTaskDone = deps.onTaskDone
     this.onApproveMerge = deps.onApproveMerge
     this.onAbandon = deps.onAbandon
+    // 与 WorkspaceService.integrationWorktreePath 保持同一目录约定
+    this.integrationWorktreePath =
+      deps.integrationWorktreePath ??
+      ((workspaceId) => join(this.worktreesRoot, workspaceId, 'integration'))
   }
 
   /** 启动调度：应用启动时调用一次，接管数据库中已存在的排队任务 */
   start(): void {
     this.schedule()
+  }
+
+  /**
+   * 应用启动时修复上次异常退出留下的状态。
+   *
+   * preparing/running/merging 说明任务在执行或合并途中被打断：先尽力中止 integration
+   * worktree 里可能残留的半完成合并，再把任务标为 interrupted（不写结束时间）。
+   * interrupted 不属于调度器挑选的排队状态，因此不会自动重跑，只能由用户显式重试。
+   * done 但尚未合并的任务（重启前 onTaskDone 没来得及执行）重新交给合并协调器补合并。
+   */
+  recoverInterrupted(): void {
+    void (async () => {
+      for (const workspace of this.workspaces.list()) {
+        for (const task of this.tasks.listByWorkspace(workspace.id)) {
+          if (
+            task.status !== 'preparing' &&
+            task.status !== 'running' &&
+            task.status !== 'merging'
+          ) {
+            continue
+          }
+
+          // 只有 merging 会留下半完成的合并；其余状态 abort 失败属于可忽略的尽力恢复
+          try {
+            await this.git.mergeAbort(this.integrationWorktreePath(workspace.id))
+          } catch {
+            // 没有进行中的合并，无需处理
+          }
+
+          this.tasks.update(task.id, { status: 'interrupted' })
+          this.emitTask(task.id)
+        }
+      }
+
+      // 重启前已成功但未来得及合并的任务：补调回调，让合并协调器继续收尾
+      if (this.onTaskDone !== undefined) {
+        for (const workspace of this.workspaces.list()) {
+          for (const task of this.tasks.listByWorkspace(workspace.id)) {
+            if (task.status !== 'done') {
+              continue
+            }
+            try {
+              const pending: unknown = this.onTaskDone(task.id)
+              if (pending instanceof Promise) {
+                void pending.catch((error: unknown) => {
+                  console.error(`合并任务失败：${task.id}`, error)
+                })
+              }
+            } catch (error) {
+              // 单个任务补合并失败不能阻止其余任务
+              console.error(`合并任务失败：${task.id}`, error)
+            }
+          }
+        }
+      }
+    })().catch((error: unknown) => {
+      // 恢复流程中的数据库/查询异常不应变成未处理的 Promise 拒绝
+      console.error('恢复中断任务失败', error)
+    })
   }
 
   /** 新任务落库后触发调度；队列顺序始终以数据库中的 createdAt 为准 */
@@ -133,24 +200,53 @@ export class TaskManager {
   }
 
   /**
-   * 重试任务。Task 11 仅做最小重置（状态回到 queued 并重新排队）；
-   * 旧分支/worktree 的清理与可重试状态校验在 Task 13 补齐。
+   * 重试任务：仅 interrupted/failed/cancelled 可重试。
+   * 重试前彻底清理旧现场（worktree 目录、git worktree 元数据、旧分支），
+   * 保证新一次执行从干净的 integration 基线开始；清理失败时保持原状态可再次重试。
+   * 原始 prompt 与标题保留，其余运行现场字段全部重置。
    */
   async retry(taskId: string): Promise<void> {
     const task = this.tasks.get(taskId)
     if (task === null) {
       throw new Error(`任务不存在：${taskId}`)
     }
+    if (task.status !== 'interrupted' && task.status !== 'failed' && task.status !== 'cancelled') {
+      throw new Error(`只有中断、失败或取消的任务可以重试：${taskId}`)
+    }
+
+    const workspace = this.workspaces.get(task.workspaceId)
+    if (workspace === null) {
+      throw new Error(`任务所属工作区不存在：${task.workspaceId}`)
+    }
+
+    try {
+      if (task.worktreePath !== null) {
+        // 崩溃后目录可能已被移除：先按实际存在与否清理，再 prune 失效的 worktree 元数据
+        if (existsSync(task.worktreePath)) {
+          await this.git.worktreeRemove(workspace.repoPath, task.worktreePath)
+        }
+        await this.git.pruneWorktrees(workspace.repoPath)
+      }
+      if (task.branch !== null && (await this.git.branchExists(workspace.repoPath, task.branch))) {
+        await this.git.deleteBranch(workspace.repoPath, task.branch)
+      }
+    } catch (error) {
+      // 清理失败时不入队，任务仍是可重试状态，用户可再次重试
+      throw new Error(`重试前清理任务现场失败：${errorMessage(error)}`)
+    }
 
     this.tasks.update(taskId, {
       status: 'queued',
+      branch: null,
+      worktreePath: null,
+      baseRef: null,
       exitCode: null,
       summary: null,
       startedAt: null,
       finishedAt: null
     })
     this.emitTask(taskId)
-    this.schedule()
+    this.enqueue(taskId)
   }
 
   /**
