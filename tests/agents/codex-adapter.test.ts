@@ -158,6 +158,28 @@ describe('CodexStreamParser', () => {
       { type: 'final', summary: 'done' }
     ])
   })
+
+  test('parser never treats reasoning or item-level error as final', () => {
+    const parser = new CodexStreamParser()
+
+    expect(
+      parser.pushLine('{"type":"item.completed","item":{"type":"reasoning","text":"thinking"}}')
+    ).toEqual([])
+    expect(
+      parser.pushLine('{"type":"item.completed","item":{"type":"error","message":"boom"}}')
+    ).toEqual([])
+    expect(
+      parser.pushLine('{"type":"item.completed","item":{"type":"todo_list","items":[]}}')
+    ).toEqual([])
+  })
+
+  test('parser still emits final for an agent_message item', () => {
+    const parser = new CodexStreamParser()
+
+    expect(
+      parser.pushLine('{"type":"item.completed","item":{"type":"agent_message","text":"done"}}')
+    ).toEqual([{ type: 'final', summary: 'done' }])
+  })
 })
 
 describe('CodexAdapter', () => {
@@ -233,6 +255,51 @@ describe('CodexAdapter', () => {
     await expect(pending).rejects.toBeInstanceOf(AgentRunError)
     await expect(pending).rejects.toThrow('取消')
     expect(runner.killed).toBe(true)
+  })
+
+  test('reasoning-only run falls back to the output tail instead of using reasoning text', async () => {
+    const reasoningLine = JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'reasoning', text: 'internal reasoning' }
+    })
+    const runner = new ScriptedRunner([`${reasoningLine}\n`])
+    const adapter = new CodexAdapter(runner, 'read-only')
+
+    const events = await collect(
+      adapter.start({ prompt: 'do it', cwd, signal: new AbortController().signal })
+    )
+
+    expect(events.filter((event) => event.type === 'final')).toEqual([
+      { type: 'final', summary: reasoningLine }
+    ])
+  })
+
+  test('item-level error on non-zero exit throws without yielding it as final', async () => {
+    const errorLine = JSON.stringify({
+      type: 'item.completed',
+      item: { type: 'error', message: 'tool failed' }
+    })
+    const runner = new ScriptedRunner([`${errorLine}\n`], { code: 2 })
+    const adapter = new CodexAdapter(runner, 'read-only')
+
+    const events: AgentEvent[] = []
+    let thrown: unknown = null
+    try {
+      for await (const event of adapter.start({
+        prompt: 'do it',
+        cwd,
+        signal: new AbortController().signal
+      })) {
+        events.push(event)
+      }
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(AgentRunError)
+    expect((thrown as AgentRunError).exitCode).toBe(2)
+    expect((thrown as AgentRunError).message).toContain('tool failed')
+    expect(events.some((event) => event.type === 'final')).toBe(false)
   })
 
   test('falls back to a final summary from the last 20 lines when no final event arrives', async () => {

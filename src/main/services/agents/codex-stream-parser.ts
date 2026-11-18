@@ -6,7 +6,7 @@
  * 放在 `item.type`（`command_execution`、`mcp_tool_call`、`agent_message` 等）。
  * 为了兼容旧版或未知形态，顶层 `type` 与 `item.type` 都参与识别：
  * - 类型含 command / tool → progress（命令执行、MCP 工具调用）；
- * - 已完成事件中的 item.text / message → final 摘要；
+ * - 已完成事件中的 agent_message → final 摘要；
  * - 其余 JSON 对象一律忽略，非 JSON 行原样产出 log（stderr 文本也走这条路径）。
  *
  * 解析器保持宽容：任何输入都不抛异常，避免 CLI 输出格式漂移导致任务失败。
@@ -51,10 +51,31 @@ export class CodexStreamParser {
       return []
     }
 
+    // item.completed 也会包裹 reasoning、error 等条目：reasoning.text 是推理摘要，
+    // error.message 是错误信息，都不能当作任务结果。只有 agent_message 才是最终回复。
+    if (item !== null) {
+      if (item.type !== 'agent_message') {
+        return []
+      }
+    } else if (typeMarkers.some((marker) => NON_FINAL_TOP_LEVEL_TYPES.has(marker))) {
+      // 无 item 的旧形态没有 agent_message 标记，只能靠排除已知的非最终类型兜底，
+      // 避免把顶层 reasoning / error 等形态误判为 final。
+      return []
+    }
+
     const summary = finalText(parsed, item)
     return summary !== null ? [{ type: 'final', summary }] : []
   }
 }
+
+// 顶层事件中明确不属于最终摘要的类型（旧形态兼容路径使用）。
+const NON_FINAL_TOP_LEVEL_TYPES = new Set([
+  'reasoning',
+  'error',
+  'todo_list',
+  'file_change',
+  'web_search'
+])
 
 /**
  * 生成进度文本：优先展示实际命令或工具名，便于用户在群消息里看懂 Agent 在做什么；
