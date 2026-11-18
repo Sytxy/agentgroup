@@ -16,6 +16,20 @@ describe('mergeUserPath', () => {
     expect(mergeUserPath('::/bin::', ':/usr/local/bin::')).toBe('/usr/local/bin:/bin')
   })
 
+  test('relative entries are dropped so worktree files cannot hijack commands', () => {
+    // `.`、`bin`、`../tools` 都会相对任务 worktree 解析；仓库里的同名文件可能劫持
+    // pnpm/git/claude 等命令，因此只保留绝对路径。
+    expect(mergeUserPath('./node_modules/.bin:/bin:relative', '.:bin:../tools:/usr/bin')).toBe(
+      '/usr/bin:/bin'
+    )
+  })
+
+  test('entries are trimmed before the absolute-path check', () => {
+    expect(mergeUserPath(' /usr/bin : . : /bin ', ' /opt/homebrew/bin ')).toBe(
+      '/opt/homebrew/bin:/usr/bin:/bin'
+    )
+  })
+
   test('empty inputs produce an empty PATH', () => {
     expect(mergeUserPath('', '')).toBe('')
   })
