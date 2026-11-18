@@ -36,6 +36,12 @@ export interface TaskManagerDeps {
   worktreesRoot: string
   logsRoot: string
   now?: () => Date
+  /** 任务进入 done 后通知合并协调器；失败/取消不触发 */
+  onTaskDone?: (taskId: string) => void
+  /** IPC 层审批合并的转发目标；未注入时对应操作不可用 */
+  onApproveMerge?: (taskId: string) => Promise<void>
+  /** IPC 层放弃任务的转发目标；未注入时对应操作不可用 */
+  onAbandon?: (taskId: string) => Promise<void>
 }
 
 interface RunningTask {
@@ -56,6 +62,9 @@ export class TaskManager {
   private readonly worktreesRoot: string
   private readonly logsRoot: string
   private readonly now: () => Date
+  private readonly onTaskDone?: (taskId: string) => void
+  private readonly onApproveMerge?: (taskId: string) => Promise<void>
+  private readonly onAbandon?: (taskId: string) => Promise<void>
 
   /** 正在运行的任务，value 持有取消信号与完成 Promise */
   private readonly running = new Map<string, RunningTask>()
@@ -76,6 +85,9 @@ export class TaskManager {
     this.worktreesRoot = deps.worktreesRoot
     this.logsRoot = deps.logsRoot
     this.now = deps.now ?? (() => new Date())
+    this.onTaskDone = deps.onTaskDone
+    this.onApproveMerge = deps.onApproveMerge
+    this.onAbandon = deps.onAbandon
   }
 
   /** 启动调度：应用启动时调用一次，接管数据库中已存在的排队任务 */
@@ -139,6 +151,25 @@ export class TaskManager {
     })
     this.emitTask(taskId)
     this.schedule()
+  }
+
+  /**
+   * 审批合并：只做转发，合并闸门与状态更新由合并协调器负责。
+   * 未注入回调时明确报错，避免静默忽略用户操作。
+   */
+  async approveMerge(taskId: string): Promise<void> {
+    if (this.onApproveMerge === undefined) {
+      throw new Error('未配置合并协调器：无法审批合并')
+    }
+    await this.onApproveMerge(taskId)
+  }
+
+  /** 放弃任务：同样转发给合并协调器清理 worktree 并更新状态 */
+  async abandon(taskId: string): Promise<void> {
+    if (this.onAbandon === undefined) {
+      throw new Error('未配置合并协调器：无法放弃任务')
+    }
+    await this.onAbandon(taskId)
   }
 
   /** 收集所有工作区的排队任务并按 createdAt 正序排列 */
@@ -414,6 +445,18 @@ export class TaskManager {
     })
     this.emitTask(task.id)
     this.addSystemMessage(task, terminalMessage(status, task.title, summary))
+
+    // 成功任务交给合并协调器；异步失败不能影响任务终态与 Agent 释放
+    if (status === 'done' && this.onTaskDone !== undefined) {
+      try {
+        const pending: unknown = this.onTaskDone(task.id)
+        if (pending instanceof Promise) {
+          void pending.catch(() => undefined)
+        }
+      } catch {
+        // 合并通知本身失败不应影响任务已经写入的 done 状态
+      }
+    }
   }
 
   private emitTask(taskId: string): void {

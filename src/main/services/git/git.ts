@@ -195,4 +195,13 @@ export class GitService {
   async mergeAbort(cwd: string): Promise<void> {
     await this.git(cwd, ['merge', '--abort'])
   }
+
+  /**
+   * 返回当前未解决冲突的文件（相对 cwd）。同样使用 -z，保证中文等路径原样返回。
+   * 手动解决冲突后，用它确认没有残留的未合并文件再允许提交。
+   */
+  async unmergedFiles(cwd: string): Promise<string[]> {
+    const { stdout } = await this.git(cwd, ['diff', '-z', '--name-only', '--diff-filter=U'])
+    return stdout.split('\0').filter((path) => path !== '')
+  }
 }

@@ -166,6 +166,34 @@ describe('GitService', () => {
     await git.mergeAbort(repo.path)
   })
 
+  test('unmergedFiles lists conflict paths until they are resolved', async () => {
+    const { stdout: branchOut } = await gitRun(repo.path, ['rev-parse', '--abbrev-ref', 'HEAD'])
+    const defaultBranch = branchOut.trim()
+
+    await git.createBranch(repo.path, 'feature', 'HEAD')
+
+    await writeFile(join(repo.path, 'README.md'), 'main version\n')
+    await git.commitAll(repo.path, 'main change')
+
+    await gitRun(repo.path, ['checkout', 'feature'])
+    await writeFile(join(repo.path, 'README.md'), 'feature version\n')
+    await git.commitAll(repo.path, 'feature change')
+
+    await gitRun(repo.path, ['checkout', defaultBranch])
+    expect(await git.merge(repo.path, 'feature')).toEqual({
+      status: 'conflict',
+      conflicts: ['README.md']
+    })
+    expect(await git.unmergedFiles(repo.path)).toEqual(['README.md'])
+
+    // 解决冲突并 git add 后，未合并文件列表为空
+    await writeFile(join(repo.path, 'README.md'), 'resolved version\n')
+    await gitRun(repo.path, ['add', 'README.md'])
+    expect(await git.unmergedFiles(repo.path)).toEqual([])
+
+    await gitRun(repo.path, ['merge', '--abort'])
+  })
+
   test('merge reports merged for a clean merge', async () => {
     const { stdout: branchOut } = await gitRun(repo.path, ['rev-parse', '--abbrev-ref', 'HEAD'])
     const defaultBranch = branchOut.trim()

@@ -1,0 +1,549 @@
+import { randomUUID } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { AgentRepo } from '../../src/main/db/agent-repo'
+import { MessageRepo } from '../../src/main/db/message-repo'
+import { TaskRepo } from '../../src/main/db/task-repo'
+import { WorkspaceRepo } from '../../src/main/db/workspace-repo'
+import { EventBus } from '../../src/main/events'
+import { GitService } from '../../src/main/services/git/git'
+import { SerialQueue } from '../../src/main/services/git/serial-queue'
+import { MergeCoordinator } from '../../src/main/services/tasks/merge-coordinator'
+import { SetupRunner } from '../../src/main/services/tasks/setup-runner'
+import { TaskManager } from '../../src/main/services/tasks/task-manager'
+import {
+  INTEGRATION_BRANCH,
+  WorkspaceService
+} from '../../src/main/services/workspace-service'
+import type { AgentConfig, AppEvent, Task, Workspace } from '../../src/shared/types'
+import { createTestDb, type TestDb } from '../helpers/db'
+import { FakeAdapter } from '../helpers/fake-adapter'
+import { createTempRepo, gitRun, type TempRepo } from '../helpers/temp-repo'
+
+const FIXED_TIME = '2026-11-18T10:00:00.000Z'
+
+let tempRepo: TempRepo
+let testDb: TestDb
+let workspaces: WorkspaceRepo
+let agents: AgentRepo
+let tasks: TaskRepo
+let messages: MessageRepo
+let events: EventBus
+let git: GitService
+let workspaceService: WorkspaceService
+let workspace: Workspace
+let worktreesRoot: string
+let logsRoot: string
+let coordinator: MergeCoordinator
+let enqueued: string[]
+let seen: AppEvent[]
+
+beforeEach(async () => {
+  tempRepo = await createTempRepo()
+  testDb = await createTestDb()
+  workspaces = new WorkspaceRepo(testDb.db)
+  agents = new AgentRepo(testDb.db)
+  tasks = new TaskRepo(testDb.db)
+  messages = new MessageRepo(testDb.db)
+  events = new EventBus()
+  git = new GitService()
+  worktreesRoot = join(tempRepo.root, 'worktrees')
+  logsRoot = join(tempRepo.root, 'logs')
+  workspaceService = new WorkspaceService({ repo: workspaces, git, worktreesRoot })
+  workspace = await workspaceService.create({ name: 'Demo', repoPath: tempRepo.path })
+  enqueued = []
+  seen = []
+  events.on((event) => seen.push(event))
+  coordinator = new MergeCoordinator({
+    queue: new SerialQueue(),
+    git,
+    tasks,
+    agents,
+    workspaces,
+    events,
+    enqueue: (taskId) => enqueued.push(taskId),
+    integrationWorktreePath: (workspaceId) =>
+      workspaceService.integrationWorktreePath(workspaceId)
+  })
+})
+
+afterEach(async () => {
+  await testDb.cleanup()
+  await tempRepo.cleanup()
+})
+
+function insertAgent(overrides: Partial<AgentConfig> = {}): AgentConfig {
+  const agent: AgentConfig = {
+    id: 'agent-claude',
+    workspaceId: workspace.id,
+    name: 'claude',
+    preset: 'claude',
+    command: 'claude',
+    argsTemplate: null,
+    rolePrompt: '',
+    pathScope: [],
+    permissionProfile: 'edit-and-run',
+    canDelegate: false,
+    enabled: true,
+    ...overrides
+  }
+  agents.insert(agent)
+  return agent
+}
+
+function integrationPath(): string {
+  return workspaceService.integrationWorktreePath(workspace.id)
+}
+
+/** 直接构造一个已经完成、带独立 worktree 与分支的任务，等价于 TaskManager 成功后的现场 */
+async function createDoneTask(
+  options: {
+    title?: string
+    files?: Record<string, string>
+    agentId?: string
+  } = {}
+): Promise<Task> {
+  const id = randomUUID()
+  const baseRef = await git.revParse(tempRepo.path, INTEGRATION_BRANCH)
+  const branch = `agent/${id}`
+  const worktreePath = join(worktreesRoot, workspace.id, id)
+
+  await mkdir(dirname(worktreePath), { recursive: true })
+  await git.worktreeAdd(tempRepo.path, worktreePath, branch, baseRef)
+  for (const [file, content] of Object.entries(options.files ?? {})) {
+    await mkdir(dirname(join(worktreePath, file)), { recursive: true })
+    await writeFile(join(worktreePath, file), content)
+  }
+  if (Object.keys(options.files ?? {}).length > 0) {
+    await git.commitAll(worktreePath, `agent(work): ${options.title ?? 'Task'}`)
+  }
+
+  const task: Task = {
+    id,
+    workspaceId: workspace.id,
+    agentId: options.agentId ?? 'agent-claude',
+    parentTaskId: null,
+    taskType: 'code',
+    title: options.title ?? 'Task',
+    prompt: '做点事',
+    branch,
+    worktreePath,
+    baseRef,
+    status: 'done',
+    exitCode: 0,
+    summary: null,
+    createdAt: FIXED_TIME,
+    startedAt: FIXED_TIME,
+    finishedAt: FIXED_TIME
+  }
+  tasks.insert(task)
+  return task
+}
+
+/**
+ * 先让任务分支与 integration 修改同一文件，再触发合并，得到冲突任务现场。
+ * 冲突合并会被中止，integration 保持自己的内容。
+ */
+async function createConflictTask(fileName = 'README.md'): Promise<Task> {
+  const task = await createDoneTask({
+    title: 'Conflicting',
+    files: { [fileName]: 'branch version\n' }
+  })
+  await writeFile(join(integrationPath(), fileName), 'integration version\n')
+  await git.commitAll(integrationPath(), 'integration change')
+
+  await coordinator.mergeTask(task.id)
+  const stored = tasks.get(task.id) as Task
+  expect(stored.status).toBe('conflict')
+  return stored
+}
+
+function recordStatuses(taskId: string): string[] {
+  return seen
+    .filter(
+      (event): event is Extract<AppEvent, { type: 'task-updated' }> =>
+        event.type === 'task-updated' && event.task.id === taskId
+    )
+    .map((event) => event.task.status)
+}
+
+function createManager(
+  adapter: FakeAdapter,
+  overrides: Partial<ConstructorParameters<typeof TaskManager>[0]> = {}
+): TaskManager {
+  return new TaskManager({
+    tasks,
+    agents,
+    workspaces,
+    messages,
+    git,
+    setup: new SetupRunner(),
+    adapters: { create: () => adapter },
+    events,
+    worktreesRoot,
+    logsRoot,
+    ...overrides
+  })
+}
+
+async function waitFor(condition: () => boolean, timeoutMs = 4000): Promise<void> {
+  const start = Date.now()
+  while (!condition()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error('waitFor 超时：条件未在预期时间内成立')
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
+describe('MergeCoordinator', () => {
+  test('clean in-scope task is merged automatically into integration', async () => {
+    insertAgent()
+    const task = await createDoneTask({ files: { 'FEATURE.md': 'feature\n' } })
+    const integrationHead = await git.head(integrationPath())
+
+    await coordinator.mergeTask(task.id)
+
+    const stored = tasks.get(task.id) as Task
+    expect(stored.status).toBe('merged')
+    expect(stored.summary).toBeNull()
+    expect(recordStatuses(task.id)).toContain('merging')
+    expect(recordStatuses(task.id).at(-1)).toBe('merged')
+
+    expect(await readFile(join(integrationPath(), 'FEATURE.md'), 'utf8')).toBe('feature\n')
+    expect(await git.head(integrationPath())).not.toBe(integrationHead)
+  })
+
+  test('merged task worktree is removed after merge but its branch is kept', async () => {
+    insertAgent()
+    const task = await createDoneTask({ files: { 'FEATURE.md': 'feature\n' } })
+
+    await coordinator.mergeTask(task.id)
+
+    expect(tasks.get(task.id)?.status).toBe('merged')
+    expect(existsSync(task.worktreePath as string)).toBe(false)
+    expect(await git.branchExists(tempRepo.path, task.branch as string)).toBe(true)
+  })
+
+  test('task with no changes is marked merged without a merge commit', async () => {
+    insertAgent()
+    const task = await createDoneTask()
+    const integrationHead = await git.head(integrationPath())
+
+    await coordinator.mergeTask(task.id)
+
+    const stored = tasks.get(task.id) as Task
+    expect(stored.status).toBe('merged')
+    expect(stored.summary).toBe('无代码改动')
+    // 没有产生 merge commit，integration 指向不变
+    expect(await git.head(integrationPath())).toBe(integrationHead)
+    expect(existsSync(task.worktreePath as string)).toBe(false)
+  })
+
+  test('conflict marks task conflict, aborts merge and later tasks still merge', async () => {
+    insertAgent()
+    const conflicting = await createConflictTask()
+
+    expect(conflicting.summary).toContain('README.md')
+    expect(recordStatuses(conflicting.id)).toContain('merging')
+    // 合并已中止，integration 工作区保持干净
+    const { stdout: status } = await gitRun(integrationPath(), ['status', '--porcelain'])
+    expect(status.trim()).toBe('')
+    expect(await readFile(join(integrationPath(), 'README.md'), 'utf8')).toBe(
+      'integration version\n'
+    )
+    // 冲突保留现场
+    expect(existsSync(conflicting.worktreePath as string)).toBe(true)
+
+    const later = await createDoneTask({ files: { 'LATER.md': 'later\n' } })
+    await coordinator.mergeTask(later.id)
+    expect(tasks.get(later.id)?.status).toBe('merged')
+    expect(await readFile(join(integrationPath(), 'LATER.md'), 'utf8')).toBe('later\n')
+  })
+
+  test('merge of a Chinese-named file conflict reports the exact path', async () => {
+    insertAgent()
+    const task = await createConflictTask('设计说明.md')
+
+    expect(task.status).toBe('conflict')
+    expect(task.summary).toBe('合并冲突：设计说明.md')
+    expect(existsSync(task.worktreePath as string)).toBe(true)
+    // 冲突中止后 integration 保持自身内容
+    expect(await readFile(join(integrationPath(), '设计说明.md'), 'utf8')).toBe(
+      'integration version\n'
+    )
+  })
+
+  test('out-of-scope changes pause at awaiting_approval until approved', async () => {
+    insertAgent({ pathScope: ['src/**'] })
+    const task = await createDoneTask({ files: { 'README.md': 'out of scope\n' } })
+    const integrationHead = await git.head(integrationPath())
+
+    await coordinator.mergeTask(task.id)
+
+    const stored = tasks.get(task.id) as Task
+    expect(stored.status).toBe('awaiting_approval')
+    expect(stored.summary).toContain('README.md')
+    // 未合并：integration 内容与提交都不变，现场保留
+    expect(await git.head(integrationPath())).toBe(integrationHead)
+    expect(await readFile(join(integrationPath(), 'README.md'), 'utf8')).not.toBe(
+      'out of scope\n'
+    )
+    expect(existsSync(task.worktreePath as string)).toBe(true)
+  })
+
+  test('approve merges an out-of-scope task', async () => {
+    insertAgent({ pathScope: ['src/**'] })
+    const task = await createDoneTask({ files: { 'README.md': 'approved content\n' } })
+
+    await coordinator.mergeTask(task.id)
+    expect(tasks.get(task.id)?.status).toBe('awaiting_approval')
+
+    await coordinator.approve(task.id)
+
+    const stored = tasks.get(task.id) as Task
+    expect(stored.status).toBe('merged')
+    expect(await readFile(join(integrationPath(), 'README.md'), 'utf8')).toBe(
+      'approved content\n'
+    )
+    expect(existsSync(task.worktreePath as string)).toBe(false)
+  })
+
+  test('auto-merge disabled pauses at awaiting_approval with a manual confirmation reason', async () => {
+    workspaces.update(workspace.id, { autoMerge: false })
+    insertAgent()
+    const task = await createDoneTask({ files: { 'FEATURE.md': 'feature\n' } })
+    const integrationHead = await git.head(integrationPath())
+
+    await coordinator.mergeTask(task.id)
+
+    const stored = tasks.get(task.id) as Task
+    expect(stored.status).toBe('awaiting_approval')
+    expect(stored.summary).toBe('需要确认合并')
+    expect(await git.head(integrationPath())).toBe(integrationHead)
+    expect(existsSync(task.worktreePath as string)).toBe(true)
+  })
+
+  test('approve only accepts tasks that are awaiting approval', async () => {
+    insertAgent()
+    const task = await createDoneTask({ files: { 'FEATURE.md': 'feature\n' } })
+
+    await expect(coordinator.approve(task.id)).rejects.toThrow('只允许审批等待确认的任务')
+
+    await coordinator.mergeTask(task.id)
+    await expect(coordinator.approve(task.id)).rejects.toThrow('只允许审批等待确认的任务')
+  })
+
+  test('createResolveTask produces a resolve task on the agent branch', async () => {
+    insertAgent()
+    const conflict = await createConflictTask()
+
+    const resolve = coordinator.createResolveTask(conflict.id, 'agent-claude')
+
+    expect(resolve.taskType).toBe('resolve')
+    expect(resolve.workspaceId).toBe(conflict.workspaceId)
+    expect(resolve.agentId).toBe('agent-claude')
+    expect(resolve.parentTaskId).toBe(conflict.id)
+    expect(resolve.branch).toBe(conflict.branch)
+    expect(resolve.worktreePath).toBe(conflict.worktreePath)
+    expect(resolve.baseRef).toBe(conflict.baseRef)
+    expect(resolve.status).toBe('queued')
+    expect(resolve.prompt).toContain(INTEGRATION_BRANCH)
+    expect(resolve.prompt).toContain('解决冲突')
+    expect(resolve.prompt).toContain('提交')
+    // 落库并重新入队
+    expect(tasks.get(resolve.id)).toEqual(resolve)
+    expect(enqueued).toEqual([resolve.id])
+  })
+
+  test('createResolveTask rejects a task that is not in conflict', async () => {
+    insertAgent()
+    const task = await createDoneTask()
+
+    expect(() => coordinator.createResolveTask(task.id, 'agent-claude')).toThrow(
+      '只为冲突任务创建解决任务'
+    )
+  })
+
+  test('prepareResolveWorktree recreates the worktree on the conflicting agent branch', async () => {
+    insertAgent()
+    const conflict = await createConflictTask()
+    const worktreePath = conflict.worktreePath as string
+
+    // 现场存在时直接返回原路径
+    expect(await coordinator.prepareResolveWorktree(conflict.id)).toBe(worktreePath)
+
+    await git.worktreeRemove(tempRepo.path, worktreePath)
+    expect(existsSync(worktreePath)).toBe(false)
+
+    const recreated = await coordinator.prepareResolveWorktree(conflict.id)
+    expect(recreated).toBe(worktreePath)
+    expect(existsSync(worktreePath)).toBe(true)
+    const { stdout } = await gitRun(worktreePath, ['rev-parse', '--abbrev-ref', 'HEAD'])
+    expect(stdout.trim()).toBe(conflict.branch)
+  })
+
+  test('markManuallyResolved rejects while unmerged files remain', async () => {
+    insertAgent()
+    const conflict = await createConflictTask()
+    const worktreePath = conflict.worktreePath as string
+
+    // 在工作区里把 integration 合入分支，制造未解决冲突
+    await gitRun(worktreePath, ['merge', '--no-ff', INTEGRATION_BRANCH]).catch(() => undefined)
+    expect(await git.unmergedFiles(worktreePath)).toEqual(['README.md'])
+
+    await expect(coordinator.markManuallyResolved(conflict.id)).rejects.toThrow(
+      '仍存在未解决的冲突文件：README.md'
+    )
+    expect(tasks.get(conflict.id)?.status).toBe('conflict')
+  })
+
+  test('markManuallyResolved commits the fix and re-merges', async () => {
+    insertAgent()
+    const conflict = await createConflictTask()
+    const worktreePath = conflict.worktreePath as string
+
+    await gitRun(worktreePath, ['merge', '--no-ff', INTEGRATION_BRANCH]).catch(() => undefined)
+    await writeFile(join(worktreePath, 'README.md'), 'manually resolved\n')
+    await gitRun(worktreePath, ['add', 'README.md'])
+    expect(await git.unmergedFiles(worktreePath)).toEqual([])
+
+    await coordinator.markManuallyResolved(conflict.id)
+
+    const stored = tasks.get(conflict.id) as Task
+    expect(stored.status).toBe('merged')
+    expect(await readFile(join(integrationPath(), 'README.md'), 'utf8')).toBe(
+      'manually resolved\n'
+    )
+    expect(existsSync(worktreePath)).toBe(false)
+    // 残余修改以 resolve: 标题 提交到任务分支
+    const { stdout: message } = await gitRun(tempRepo.path, [
+      'log',
+      '-1',
+      '--pretty=%s',
+      stored.branch as string
+    ])
+    expect(message.trim()).toBe('resolve: Conflicting')
+  })
+
+  test('abandon removes the worktree, marks abandoned and keeps the branch', async () => {
+    insertAgent()
+    const task = await createDoneTask({ files: { 'FEATURE.md': 'feature\n' } })
+    await coordinator.mergeTask(task.id)
+    expect(tasks.get(task.id)?.status).toBe('merged')
+
+    const abandoned = await createDoneTask({ files: { 'OTHER.md': 'other\n' } })
+    await coordinator.abandon(abandoned.id)
+
+    const stored = tasks.get(abandoned.id) as Task
+    expect(stored.status).toBe('abandoned')
+    expect(existsSync(abandoned.worktreePath as string)).toBe(false)
+    expect(await git.branchExists(tempRepo.path, abandoned.branch as string)).toBe(true)
+  })
+
+  test('mergeTask rejects tasks that are not done', async () => {
+    insertAgent()
+    const task = await createDoneTask()
+    tasks.update(task.id, { status: 'running' })
+
+    await expect(coordinator.mergeTask(task.id)).rejects.toThrow('只有已完成的任务可以合并')
+  })
+})
+
+describe('TaskManager merge wiring', () => {
+  test('done tasks notify onTaskDone, while cancelled tasks do not', async () => {
+    insertAgent()
+    const doneTask = await createDoneTask()
+    tasks.update(doneTask.id, { status: 'queued', branch: null, worktreePath: null, baseRef: null })
+    await git.worktreeRemove(tempRepo.path, doneTask.worktreePath as string)
+
+    const onTaskDone = vi.fn()
+    const adapter = new FakeAdapter({
+      steps: [
+        {
+          before: async (cwd) => {
+            await writeFile(join(cwd, 'OUT.md'), 'done\n')
+          },
+          event: { type: 'final', summary: '完成' }
+        }
+      ]
+    })
+    const manager = createManager(adapter, { onTaskDone })
+    manager.start()
+    await waitFor(() => tasks.get(doneTask.id)?.status === 'done')
+
+    expect(onTaskDone).toHaveBeenCalledTimes(1)
+    expect(onTaskDone).toHaveBeenCalledWith(doneTask.id)
+  })
+
+  test('approveMerge and abandon delegate to injected callbacks', async () => {
+    const onApproveMerge = vi.fn(async () => undefined)
+    const onAbandon = vi.fn(async () => undefined)
+    const manager = createManager(new FakeAdapter(), { onApproveMerge, onAbandon })
+
+    await manager.approveMerge('task-a')
+    await manager.abandon('task-b')
+
+    expect(onApproveMerge).toHaveBeenCalledWith('task-a')
+    expect(onAbandon).toHaveBeenCalledWith('task-b')
+  })
+
+  test('delegates reject when no callback is configured', async () => {
+    const manager = createManager(new FakeAdapter())
+
+    await expect(manager.approveMerge('task-a')).rejects.toThrow('未配置合并协调器')
+    await expect(manager.abandon('task-b')).rejects.toThrow('未配置合并协调器')
+  })
+
+  test('resolve task preserves its pre-set branch, worktree and baseRef', async () => {
+    insertAgent()
+    const conflict = await createConflictTask()
+    const resolve = coordinator.createResolveTask(conflict.id, 'agent-claude')
+
+    const adapter = new FakeAdapter({ steps: [{ event: { type: 'final', summary: '已解决' } }] })
+    const manager = createManager(adapter)
+    manager.start()
+    await waitFor(() => tasks.get(resolve.id)?.status === 'done')
+
+    const stored = tasks.get(resolve.id) as Task
+    expect(stored.branch).toBe(conflict.branch)
+    expect(stored.worktreePath).toBe(conflict.worktreePath)
+    expect(stored.baseRef).toBe(conflict.baseRef)
+    expect(adapter.runs[0]?.cwd).toBe(conflict.worktreePath)
+  })
+
+  test('resolve task commit makes the retry merge succeed', async () => {
+    insertAgent()
+    const conflict = await createConflictTask()
+    const resolve = coordinator.createResolveTask(conflict.id, 'agent-claude')
+
+    // 模拟 Agent 把 integration 合入当前分支、解决冲突；TaskManager 结束后统一提交
+    const adapter = new FakeAdapter({
+      steps: [
+        {
+          before: async (cwd) => {
+            await gitRun(cwd, ['merge', '--no-ff', INTEGRATION_BRANCH]).catch(() => undefined)
+            await writeFile(join(cwd, 'README.md'), 'resolved by agent\n')
+          },
+          event: { type: 'final', summary: '冲突已解决' }
+        }
+      ]
+    })
+    const manager = createManager(adapter, {
+      onTaskDone: (taskId) => {
+        void coordinator.mergeTask(taskId)
+      }
+    })
+    manager.start()
+
+    await waitFor(() => tasks.get(resolve.id)?.status === 'merged')
+
+    expect(tasks.get(conflict.id)?.status).toBe('conflict')
+    expect(await readFile(join(integrationPath(), 'README.md'), 'utf8')).toBe(
+      'resolved by agent\n'
+    )
+    expect(existsSync(conflict.worktreePath as string)).toBe(false)
+  })
+})
