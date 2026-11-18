@@ -46,6 +46,16 @@ describe('GitService', () => {
     expect(await git.revParse(repo.path, 'HEAD')).toHaveLength(40)
   })
 
+  test('isIgnored returns the paths that are not ignored', async () => {
+    await writeFile(join(repo.path, '.env'), 'SECRET=1\n')
+
+    expect(await git.isIgnored(repo.path, ['.env', 'README.md', 'missing.txt'])).toEqual([
+      'README.md',
+      'missing.txt'
+    ])
+    expect(await git.isIgnored(repo.path, [])).toEqual([])
+  })
+
   test('worktreeAdd creates branch and directory', async () => {
     const worktreePath = join(repo.root, 'wt-feature')
     await git.worktreeAdd(repo.path, worktreePath, 'feat-a', 'HEAD')

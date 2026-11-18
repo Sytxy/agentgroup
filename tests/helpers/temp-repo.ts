@@ -35,7 +35,10 @@ export async function createTempRepo(): Promise<TempRepo> {
   await gitRun(path, ['config', 'user.name', 'AgentGroup Test'])
   await gitRun(path, ['config', 'user.email', 'agentgroup@example.com'])
   await writeFile(join(path, 'README.md'), '# AgentGroup temp repo\n')
-  await gitRun(path, ['add', 'README.md'])
+  // setup_copy 的目标必须被 .gitignore 忽略，否则不会被提交进 Agent 分支。
+  // 测试仓库统一忽略这些运行环境文件，并保留一个未忽略的文件供反向用例使用。
+  await writeFile(join(path, '.gitignore'), '.env\nsetup-copied.txt\n')
+  await gitRun(path, ['add', 'README.md', '.gitignore'])
   await gitRun(path, ['commit', '-m', 'initial commit'])
 
   return {

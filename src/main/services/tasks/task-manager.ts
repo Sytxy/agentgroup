@@ -208,6 +208,11 @@ export class TaskManager {
     })()
   }
 
+  /** 用户已请求取消，或运行信号已中止（setup 阶段的 abort 仅来自取消） */
+  private isCancelled(taskId: string, signal: AbortSignal): boolean {
+    return this.cancelRequested.has(taskId) || signal.aborted
+  }
+
   /** 单个任务的完整运行流程；所有失败都在这里收敛成终态，不向上抛错 */
   private async execute(taskId: string, controller: AbortController): Promise<void> {
     const task = this.tasks.get(taskId)
@@ -262,19 +267,61 @@ export class TaskManager {
       return
     }
 
+    let copiedPaths: string[] = []
     if (!reusesWorktree) {
+      // 取消可能发生在 worktree 创建完成、setup 尚未开始的间隙
+      if (this.isCancelled(task.id, controller.signal)) {
+        this.finish(task, 'cancelled', '任务已取消', null)
+        return
+      }
+
       const setupResult = await this.setup.run({
         worktreePath,
         repoPath: workspace.repoPath,
         command: workspace.setupCommand,
         copy: workspace.setupCopy,
-        timeoutMin: workspace.setupTimeoutMin
+        timeoutMin: workspace.setupTimeoutMin,
+        signal: controller.signal
       })
       if (!setupResult.ok) {
-        // setup 失败保留 worktree 现场，便于用户排查
-        this.finish(task, 'failed', `环境准备失败：${setupResult.error}`, null)
+        // setup 期间被取消时终态是 cancelled；其他失败保留 worktree 现场便于排查
+        if (this.isCancelled(task.id, controller.signal)) {
+          this.finish(task, 'cancelled', '任务已取消', null)
+        } else {
+          this.finish(task, 'failed', `环境准备失败：${setupResult.error}`, null)
+        }
         return
       }
+      // 取消可能恰好落在 setup 结束之后；此时不再进入 running，也不发开始消息
+      if (this.isCancelled(task.id, controller.signal)) {
+        this.finish(task, 'cancelled', '任务已取消', null)
+        return
+      }
+      copiedPaths = setupResult.copiedPaths
+    }
+
+    // setup 复制的是运行环境文件（如 .env），不能进入 Agent 提交与后续合并。
+    // 已忽略的文件不会被 commitAll 的 git add -A 加入；未忽略时在启动 Agent 前快速失败。
+    try {
+      const notIgnored = await this.git.isIgnored(worktreePath, copiedPaths)
+      if (notIgnored.length > 0) {
+        this.finish(
+          task,
+          'failed',
+          `setup_copy 目标未被 .gitignore 忽略：${notIgnored.join('、')}`,
+          null
+        )
+        return
+      }
+    } catch (error) {
+      this.finish(task, 'failed', `检查 setup_copy 忽略状态失败：${errorMessage(error)}`, null)
+      return
+    }
+
+    // 兜底：resolve 任务复用 worktree 或忽略检查期间发生取消时，仍不进入 running
+    if (this.isCancelled(task.id, controller.signal)) {
+      this.finish(task, 'cancelled', '任务已取消', null)
+      return
     }
 
     this.tasks.update(task.id, { status: 'running' })

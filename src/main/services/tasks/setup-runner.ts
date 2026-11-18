@@ -18,14 +18,24 @@ export interface SetupInput {
   /** 相对仓库根的路径；按声明顺序复制，目录递归复制 */
   copy: string[]
   timeoutMin: number
+  /** 用户取消时中止复制与 setup 命令 */
+  signal?: AbortSignal
 }
 
-export type SetupResult = { ok: true } | { ok: false; error: string }
+export type SetupResult =
+  | { ok: true; copiedPaths: string[] }
+  | { ok: false; error: string }
 
 export class SetupRunner {
   async run(input: SetupInput): Promise<SetupResult> {
     // 先完成全部复制：源缺失时直接失败，避免 Agent 在缺少配置的 worktree 中启动。
+    // 每项复制前检查取消信号，取消后不再继续写入 worktree。
+    const copiedPaths: string[] = []
     for (const entry of input.copy) {
+      if (input.signal?.aborted === true) {
+        return { ok: false, error: '环境准备已取消' }
+      }
+
       const source = join(input.repoPath, entry)
       if (!existsSync(source)) {
         return { ok: false, error: `要复制的文件不存在：${source}` }
@@ -37,19 +47,24 @@ export class SetupRunner {
         // 目标位于 worktree 内，创建父目录不会影响仓库本身。
         await mkdir(dirname(target), { recursive: true })
         await cp(source, target, { recursive: true })
+        copiedPaths.push(entry)
       } catch (error) {
         return { ok: false, error: `复制 ${entry} 失败：${errorMessage(error)}` }
       }
     }
 
+    if (input.signal?.aborted === true) {
+      return { ok: false, error: '环境准备已取消' }
+    }
+
     const command = input.command?.trim()
     if (command === undefined || command === '') {
-      return { ok: true }
+      return { ok: true, copiedPaths }
     }
 
     try {
-      await runSetupCommand(command, input.worktreePath, input.timeoutMin)
-      return { ok: true }
+      await runSetupCommand(command, input.worktreePath, input.timeoutMin, input.signal)
+      return { ok: true, copiedPaths }
     } catch (error) {
       return { ok: false, error: errorMessage(error) }
     }
@@ -57,7 +72,12 @@ export class SetupRunner {
 }
 
 /** 用 sh -c 执行 setup 命令，保留 shell 语义（管道、&& 等） */
-function runSetupCommand(command: string, cwd: string, timeoutMin: number): Promise<void> {
+function runSetupCommand(
+  command: string,
+  cwd: string,
+  timeoutMin: number,
+  signal: AbortSignal | undefined
+): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile(
       'sh',
@@ -65,6 +85,8 @@ function runSetupCommand(command: string, cwd: string, timeoutMin: number): Prom
       {
         cwd,
         timeout: timeoutMin * 60_000,
+        // 取消时由 Node 终止子进程，避免 setup 卡住任务收尾
+        signal,
         // 安装依赖等命令输出可能较多，放大上限避免因输出截断误报失败。
         maxBuffer: 10 * 1024 * 1024
       },
@@ -74,7 +96,11 @@ function runSetupCommand(command: string, cwd: string, timeoutMin: number): Prom
           return
         }
 
-        // Node 在超时杀进程时标记 killed；据此区分超时与普通非零退出。
+        // 取消与超时都会让 Node 杀进程；先区分取消，再区分超时与普通非零退出。
+        if (signal?.aborted === true || (error as { name?: string }).name === 'AbortError') {
+          reject(new Error('setup 命令已取消'))
+          return
+        }
         if ((error as { killed?: boolean }).killed === true) {
           reject(new Error(`setup 命令超时（超过 ${timeoutMin} 分钟）：${command}`))
           return

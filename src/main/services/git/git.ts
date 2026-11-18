@@ -87,6 +87,29 @@ export class GitService {
     await this.git(repo, ['branch', branch, fromRef])
   }
 
+  /**
+   * 返回未被 git 忽略的路径（相对 cwd）。
+   *
+   * `git check-ignore --quiet` 对已忽略路径退出 0、未忽略退出 1；其他退出码表示真实
+   * 执行错误，向上抛出。任务管理器用它确保 setup 复制进 worktree 的运行环境文件
+   * 不会被 `commitAll` 的 `git add -A` 带进 Agent 分支。
+   */
+  async isIgnored(cwd: string, paths: string[]): Promise<string[]> {
+    const notIgnored: string[] = []
+    for (const path of paths) {
+      try {
+        await this.git(cwd, ['check-ignore', '--quiet', '--', path])
+      } catch (error) {
+        if (error instanceof GitError && error.code === 1) {
+          notIgnored.push(path)
+          continue
+        }
+        throw error
+      }
+    }
+    return notIgnored
+  }
+
   /** 新建分支并同时检出到独立 worktree，任务实现就在该目录中进行 */
   async worktreeAdd(
     repo: string,

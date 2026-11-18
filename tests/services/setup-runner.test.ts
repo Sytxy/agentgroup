@@ -37,7 +37,7 @@ describe('SetupRunner', () => {
       timeoutMin: 1
     })
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toEqual({ ok: true, copiedPaths: ['.env', 'config'] })
     expect(await readFile(join(worktreePath, '.env'), 'utf8')).toBe('SECRET=1\n')
     expect(await readFile(join(worktreePath, 'config', 'nested', 'app.txt'), 'utf8')).toBe(
       'app config\n'

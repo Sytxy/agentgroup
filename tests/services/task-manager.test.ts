@@ -248,6 +248,99 @@ describe('TaskManager', () => {
     expect(await readFile(join(worktreePath, 'setup-copied.txt'), 'utf8')).toBe('TOKEN=abc\n')
   })
 
+  test('a setup_copy target that is not gitignored fails the task', async () => {
+    workspaces.update(workspace.id, { setupCopy: ['secrets.txt'] })
+    await writeFile(join(tempRepo.path, 'secrets.txt'), 'should not be committed\n')
+    insertAgent()
+
+    const adapter = new FakeAdapter()
+    const task = insertTask({ title: 'Unignored copy' })
+
+    const manager = createManager(adapter)
+    manager.start()
+    await waitFor(() => tasks.get(task.id)?.status === 'failed')
+
+    const stored = tasks.get(task.id) as Task
+    expect(stored.status).toBe('failed')
+    expect(stored.summary).toBe('setup_copy 目标未被 .gitignore 忽略：secrets.txt')
+    // 失败保留 worktree 现场
+    expect(existsSync(stored.worktreePath as string)).toBe(true)
+    // 校验发生在启动适配器之前
+    expect(adapter.runs).toHaveLength(0)
+  })
+
+  test('an ignored setup_copy target is not committed into the agent branch', async () => {
+    workspaces.update(workspace.id, {
+      setupCopy: ['.env'],
+      setupCommand: 'cat .env > setup-copied.txt'
+    })
+    await writeFile(join(tempRepo.path, '.env'), 'TOKEN=abc\n')
+    insertAgent()
+
+    const adapter = new FakeAdapter({
+      steps: [
+        {
+          before: async (cwd) => {
+            await writeFile(join(cwd, 'OUT.md'), 'done\n')
+          },
+          event: { type: 'final', summary: '完成' }
+        }
+      ]
+    })
+
+    const task = insertTask({ title: 'Ignored copy' })
+    const manager = createManager(adapter)
+    manager.start()
+    await waitFor(() => tasks.get(task.id)?.status === 'done')
+
+    const stored = tasks.get(task.id) as Task
+    const changed = await git.changedFiles(
+      stored.worktreePath as string,
+      stored.baseRef as string
+    )
+    expect(changed).toContain('OUT.md')
+    // setup 复制的 .env 与 setup 命令生成的文件都不应进入提交
+    expect(changed).not.toContain('.env')
+    expect(changed).not.toContain('setup-copied.txt')
+  })
+
+  test('cancel during setup marks the task cancelled without starting the adapter', async () => {
+    workspaces.update(workspace.id, {
+      setupCommand: 'touch setup-started && sleep 5 && touch setup-finished'
+    })
+    insertAgent()
+
+    const adapter = new FakeAdapter()
+    const task = insertTask({ title: 'Cancel during setup' })
+
+    const manager = createManager(adapter)
+    const startedAt = Date.now()
+    manager.start()
+
+    // 等待 setup 命令真正开始执行，再模拟用户取消
+    await waitFor(() => {
+      const worktreePath = tasks.get(task.id)?.worktreePath
+      return worktreePath !== null && worktreePath !== undefined && existsSync(join(worktreePath, 'setup-started'))
+    })
+
+    await manager.cancel(task.id)
+    const elapsed = Date.now() - startedAt
+
+    const stored = tasks.get(task.id) as Task
+    expect(stored.status).toBe('cancelled')
+    expect(stored.summary).toContain('取消')
+    // 取消应立即生效，而不是等 setup 超时或 sleep 结束
+    expect(elapsed).toBeLessThan(3000)
+    // setup 阶段取消时从未启动适配器，也不应发出“开始执行任务”消息
+    expect(adapter.runs).toHaveLength(0)
+    const contents = messages.listByWorkspace(workspace.id).map((message) => message.content)
+    expect(contents.some((content) => content.includes('开始执行任务'))).toBe(false)
+
+    // setup 进程被终止，后续的 touch setup-finished 不会执行
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(existsSync(join(stored.worktreePath as string, 'setup-finished'))).toBe(false)
+  })
+
   test('only one task per agent runs at a time', async () => {
     insertAgent()
 
