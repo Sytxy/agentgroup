@@ -681,8 +681,8 @@ select:focus-visible {
 }
 
 .composer:focus-within {
-  border-color: var(--accent);
-  box-shadow: var(--focus-ring), var(--shadow-soft);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent), var(--shadow-soft);
 }
 
 .composer-input {
@@ -697,7 +697,14 @@ select:focus-visible {
   font: inherit;
   font-size: 0.88rem;
   line-height: 1.62;
-  resize: vertical;
+  resize: none;
+  overflow-y: auto;
+}
+
+.composer-input:focus,
+.composer-input:focus-visible {
+  outline: none;
+  box-shadow: none;
 }
 
 .composer-input::placeholder {

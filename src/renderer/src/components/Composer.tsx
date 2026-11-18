@@ -57,6 +57,16 @@ export default function Composer({
     pendingCaret.current = null
   }, [value])
 
+  // 输入框随内容增高，最多 180px；避免固定行高留下大片空白或出现 resize 手柄。
+  useEffect(() => {
+    const textarea = textareaRef.current
+    if (textarea === null) {
+      return
+    }
+    textarea.style.height = 'auto'
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`
+  }, [value])
+
   const mention = mentionAt(value, caret)
   const suggestions =
     mention === null
