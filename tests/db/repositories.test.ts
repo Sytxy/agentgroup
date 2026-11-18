@@ -173,6 +173,19 @@ describe('sqlite repositories', () => {
     expect(agents.listByWorkspace('ws-2')).toEqual([other])
   })
 
+  test('agent delete removes the row and keeps historical task references', () => {
+    const claude = makeAgent()
+    agents.insert(claude)
+    tasks.insert(makeTask())
+
+    agents.delete('agent-1')
+
+    expect(agents.get('agent-1')).toBeNull()
+    expect(agents.listByWorkspace('ws-1')).toEqual([])
+    // 任务表的 agent_id 是普通 TEXT、没有外键，删除成员不影响历史任务记录。
+    expect(tasks.get('task-1')).toEqual(makeTask())
+  })
+
   test('task update status and list newest first', () => {
     const older = makeTask({ createdAt: '2026-11-18T10:00:00.000Z' })
     const newer = makeTask({

@@ -67,6 +67,16 @@ export class AgentRepo {
     ).map(mapRow)
   }
 
+  /**
+   * 从成员列表删除 Agent。
+   * tasks.agent_id 与 messages.author_id 是普通 TEXT、没有外键，历史任务与消息
+   * 仍保留原 id，因此删除成员不会改写或丢失历史记录。
+   */
+  delete(id: string): void {
+    this.db.raw.run('DELETE FROM agents WHERE id = ?', [id])
+    this.db.persist()
+  }
+
   update(id: string, patch: AgentPatch): void {
     const assignments: string[] = []
     const params: SqlValue[] = []

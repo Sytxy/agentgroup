@@ -3,8 +3,10 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, test, vi } from 'vitest'
-import type { ChatMessage, Task, Workspace } from '../../src/shared/types'
+import type { AgentConfig, ChatMessage, Task, Workspace } from '../../src/shared/types'
 import { IPC } from '../../src/shared/ipc'
+import { AgentRepo } from '../../src/main/db/agent-repo'
+import { TaskRepo } from '../../src/main/db/task-repo'
 import { createAppContext, type AppContext } from '../../src/main/app-context'
 import { createIpcHandlers } from '../../src/main/ipc-handlers'
 import { EventBus } from '../../src/main/events'
@@ -13,7 +15,7 @@ import { MergeCoordinator } from '../../src/main/services/tasks/merge-coordinato
 import { TaskManager } from '../../src/main/services/tasks/task-manager'
 import { Dispatcher } from '../../src/main/services/chat/dispatcher'
 import { WorkspaceService } from '../../src/main/services/workspace-service'
-import { WASM_PATH } from '../helpers/db'
+import { createTestDb, WASM_PATH } from '../helpers/db'
 
 const workspace: Workspace = {
   id: 'w1',
@@ -63,6 +65,20 @@ const message: ChatMessage = {
   createdAt: '2026-11-18T00:00:00.000Z'
 }
 
+const agent: AgentConfig = {
+  id: 'a1',
+  workspaceId: 'w1',
+  name: 'Claude',
+  preset: 'claude',
+  command: 'claude',
+  argsTemplate: null,
+  rolePrompt: '认真修改代码',
+  pathScope: ['src/**'],
+  permissionProfile: 'edit-and-run',
+  canDelegate: false,
+  enabled: true
+}
+
 /** 只提供处理器会访问到的字段；未使用的服务字段用最小桩对象占位。 */
 function makeFakeContext() {
   const workspaces = {
@@ -75,7 +91,8 @@ function makeFakeContext() {
     get: vi.fn(),
     listByWorkspace: vi.fn(() => []),
     insert: vi.fn(),
-    update: vi.fn()
+    update: vi.fn(),
+    delete: vi.fn()
   }
   const tasks = {
     get: vi.fn(),
@@ -184,6 +201,55 @@ describe('createIpcHandlers', () => {
       targetBranch: 'main'
     })
     expect(result).toBe(workspace)
+  })
+
+  test('agents:remove deletes the agent, clears the list and keeps historical tasks', async () => {
+    const handle = await createTestDb()
+    try {
+      const agents = new AgentRepo(handle.db)
+      const tasks = new TaskRepo(handle.db)
+      agents.insert(agent)
+      tasks.insert(task)
+      const { ctx } = makeFakeContext()
+      // 用真实仓储验证删除落库与历史任务不受影响，其余服务仍为假实现。
+      const handlers = createIpcHandlers({
+        ...ctx,
+        agents,
+        tasks
+      } as unknown as AppContext)
+
+      const result = await handlers[IPC.agentsRemove]!({ agentId: 'a1' })
+
+      expect(result).toEqual({ ok: true })
+      expect(agents.get('a1')).toBeNull()
+      expect(agents.listByWorkspace('w1')).toEqual([])
+      expect(tasks.get('t1')).toEqual(task)
+    } finally {
+      await handle.cleanup()
+    }
+  })
+
+  test('agents:remove rejects an unknown agent with a readable error', async () => {
+    const { ctx, agents } = makeFakeContext()
+    agents.get.mockReturnValue(null)
+    const handlers = createIpcHandlers(ctx)
+
+    await expect(handlers[IPC.agentsRemove]!({ agentId: 'missing' })).rejects.toThrow(
+      `${IPC.agentsRemove} 失败：Agent 不存在：missing`
+    )
+  })
+
+  test('agents:update ignores workspaceId so agents cannot move workspaces', async () => {
+    const { ctx, agents } = makeFakeContext()
+    agents.get.mockReturnValue(agent)
+    const handlers = createIpcHandlers(ctx)
+
+    await handlers[IPC.agentsUpdate]!({
+      agentId: 'a1',
+      patch: { workspaceId: 'w2', rolePrompt: '新的角色说明' }
+    })
+
+    expect(agents.update).toHaveBeenCalledWith('a1', { rolePrompt: '新的角色说明' })
   })
 
   test('unknown channel rejects with a readable error', async () => {

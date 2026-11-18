@@ -115,16 +115,16 @@ export function createIpcHandlers(ctx: AppContext): Record<string, IpcHandler> {
     return ctx.agents.get(agentId)
   })
 
-  // v1 没有物理删除 Agent：任务与消息会长期引用 Agent 记录，
-  // “移除”实现为停用，保留历史可追溯，也不会让已有任务失去归属。
   define(IPC.agentsRemove, (payload) => {
     const input = record(payload)
     const agentId = requiredString(input, 'agentId')
     if (ctx.agents.get(agentId) === null) {
       throw new Error(`Agent 不存在：${agentId}`)
     }
-    ctx.agents.update(agentId, { enabled: false })
-    return ctx.agents.get(agentId)
+    // 真正删除成员。任务/消息只以 TEXT 保存 agent id，历史记录不受影响；
+    // 需要保留成员但停止接活时，调用方应使用 agents:update { enabled: false }。
+    ctx.agents.delete(agentId)
+    return { ok: true }
   })
 
   // ---- 群聊 ----
@@ -372,9 +372,8 @@ function agentConfig(payload: unknown): AgentConfig {
 function agentUpdatePatch(payload: unknown): AgentPatch {
   const input = record(payload)
   const patch: AgentPatch = {}
-  if (input['workspaceId'] !== undefined) {
-    patch.workspaceId = requiredString(input, 'workspaceId')
-  }
+  // workspaceId 不在白名单内：Agent 必须留在创建时所属的工作区，避免历史任务
+  // 与本工作区的成员列表、测试 Agent 配置出现跨工作区引用。
   if (input['name'] !== undefined) {
     patch.name = requiredString(input, 'name')
   }
