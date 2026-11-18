@@ -132,6 +132,10 @@ export class TaskManager {
 
           // 即使 merging 任务此前经 finish 写入过结束时间，中断态也不能带完成时间
           this.tasks.update(task.id, { status: 'interrupted', finishedAt: null })
+          // 测试任务被中断说明验证没有结论，按失败记录
+          if (task.taskType === 'test') {
+            this.workspaces.update(task.workspaceId, { lastVerification: 'failed' })
+          }
           this.emitTask(task.id)
         }
       }
@@ -195,6 +199,10 @@ export class TaskManager {
         summary: '任务已取消',
         finishedAt: this.now().toISOString()
       })
+      // 排队中的测试任务被取消也是一次未完成的验证
+      if (task.taskType === 'test') {
+        this.workspaces.update(task.workspaceId, { lastVerification: 'failed' })
+      }
       this.emitTask(taskId)
       this.addSystemMessage(task, `任务已取消：${task.title}`)
     }
@@ -560,6 +568,12 @@ export class TaskManager {
       exitCode,
       finishedAt: this.now().toISOString()
     })
+    // 测试任务结束即代表一次验证：完成记为通过，失败/取消记为失败
+    if (task.taskType === 'test') {
+      this.workspaces.update(task.workspaceId, {
+        lastVerification: status === 'done' ? 'passed' : 'failed'
+      })
+    }
     this.emitTask(task.id)
     this.addSystemMessage(task, terminalMessage(status, task.title, summary))
 

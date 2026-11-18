@@ -92,6 +92,51 @@ export class MergeCoordinator {
     })
   }
 
+  /**
+   * 代码任务合并成功后，按工作区配置创建验证任务。
+   *
+   * 只有代码任务会触发（test/resolve 不再级联），且必须同时开启自动测试、
+   * 配置了属于本工作区且处于启用状态的测试 Agent；其余情况静默跳过。
+   * 测试任务与普通任务一样入队，由 TaskManager 在启动时创建独立 worktree。
+   */
+  maybeCreateTestTask(workspace: Workspace, mergedTask: Task): Task | null {
+    if (mergedTask.taskType !== 'code' || !workspace.autoTestAfterMerge) {
+      return null
+    }
+    if (workspace.testAgentId === null) {
+      return null
+    }
+    const agent = this.agents.get(workspace.testAgentId)
+    if (agent === null || agent.workspaceId !== workspace.id || !agent.enabled) {
+      return null
+    }
+
+    const test: Task = {
+      id: randomUUID(),
+      workspaceId: workspace.id,
+      agentId: agent.id,
+      parentTaskId: mergedTask.id,
+      taskType: 'test',
+      title: `验证：${mergedTask.title}`,
+      prompt: workspace.testTaskTemplate,
+      branch: null,
+      worktreePath: null,
+      baseRef: null,
+      status: 'queued',
+      exitCode: null,
+      summary: null,
+      createdAt: new Date().toISOString(),
+      startedAt: null,
+      finishedAt: null
+    }
+
+    this.tasks.insert(test)
+    // 先广播任务卡片，再入队调度，UI 不必等调度结果就能看到验证任务
+    this.emitTask(test.id)
+    this.enqueue(test.id)
+    return test
+  }
+
   /** 用户审批越界修改或关闭自动合并后的任务；跳过自动合并与范围闸门直接合并 */
   approve(taskId: string): Promise<void> {
     return this.queue.run(async () => {
@@ -222,6 +267,12 @@ export class MergeCoordinator {
       await this.removeWorktree(workspace, task)
       this.updateTask(task.id, { status: 'merged', summary: '无代码改动' })
       this.emitTask(task.id)
+      // 创建验证任务失败只记录日志，不能影响已经完成的合并
+      try {
+        this.maybeCreateTestTask(workspace, task)
+      } catch (error) {
+        console.error(`创建测试任务失败：${task.id}`, error)
+      }
       return
     }
 
@@ -284,6 +335,13 @@ export class MergeCoordinator {
     this.updateTask(task.id, { status: 'merged' })
     this.emitTask(task.id)
 
+    // 创建验证任务失败只记录日志，不能影响已经完成的合并
+    try {
+      this.maybeCreateTestTask(workspace, task)
+    } catch (error) {
+      console.error(`创建测试任务失败：${task.id}`, error)
+    }
+
     // 解决任务合并成功后，父冲突任务不再需要保留冲突现场：
     // 否则卡片会继续提供“打开 worktree / 标记已解决”，而目录已随解决任务删除。
     if (task.taskType === 'resolve' && task.parentTaskId !== null) {
@@ -332,6 +390,28 @@ export class MergeCoordinator {
 
   private updateTask(taskId: string, patch: Parameters<TaskRepo['update']>[1]): void {
     this.tasks.update(taskId, patch)
+
+    // 测试任务进入终态时同步工作区的最近验证结果：合并完成为通过，其余终态为失败。
+    // 合并失败/冲突可能覆盖此前 done 的 passed，按写入顺序以最后一次为准。
+    if (patch.status === undefined) {
+      return
+    }
+    const passed = patch.status === 'merged' || patch.status === 'done'
+    const terminal =
+      passed ||
+      patch.status === 'failed' ||
+      patch.status === 'conflict' ||
+      patch.status === 'cancelled' ||
+      patch.status === 'abandoned' ||
+      patch.status === 'interrupted'
+    if (!terminal) {
+      return
+    }
+    const task = this.tasks.get(taskId)
+    if (task === null || task.taskType !== 'test') {
+      return
+    }
+    this.workspaces.update(task.workspaceId, { lastVerification: passed ? 'passed' : 'failed' })
   }
 
   private emitTask(taskId: string): void {
