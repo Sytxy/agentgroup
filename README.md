@@ -69,7 +69,7 @@ App 数据位于 `~/Library/Application Support/agentgroup/`（数据库、workt
 - **权限档位**：
   - `只读`：Claude 使用 plan 模式，Codex 使用 read-only sandbox；
   - `仅编辑`：Claude 使用 acceptEdits，Codex 使用 workspace-write sandbox；
-  - `可编辑并运行命令`：允许修改文件并执行任意命令（构建、测试、安装依赖），命令以你的 macOS 账户权限运行，只对可信 CLI 使用。
+  - `可编辑并运行命令`：允许修改文件并执行任意命令（构建、测试、安装依赖）。Claude 使用 `bypassPermissions`，**没有目录沙箱**：命令可以读写整个用户账户下的文件，而不只是任务 worktree，并以你的 macOS 账户权限运行；Codex 使用 `workspace-write` 沙箱，写入限制在任务 worktree 内，但命令仍以你的账户权限运行。请只对可信的 CLI 使用此档位。
   - 权限档位只作用于 Claude/Codex 预设；**自定义 Agent 始终以当前用户权限运行**，接入前请自行确认该 CLI 的行为。
 - **允许委派**：开启后，Agent 输出中的 `@成员` 提及会继续创建后续任务。
 
@@ -155,9 +155,11 @@ xattr -dr com.apple.quarantine /Applications/AgentGroup.app
 **任务失败：Agent 进程启动失败 / 找不到命令**
 
 - 先在终端确认 `claude`、`codex` 已登录并且能直接运行。
-- App 启动时会读取登录 shell（`$SHELL`，默认 `/bin/zsh`）的 PATH，并合并到自身 PATH，因此 nvm、Homebrew、pnpm 安装在用户 profile 里的 CLI 通常可以直接找到。如果 shell 启动过慢、读取失败，或 CLI 不在登录 shell 的 PATH 中，App 会沿用系统继承的 PATH：
-  - Claude/Codex 预设固定执行 `claude`/`codex`，请确保这两个命令在登录 shell 的 PATH 中，或链接到 `/usr/local/bin`；
+- App 启动时会读取登录 shell（`$SHELL`，默认 `/bin/zsh`）的 PATH，并合并到自身 PATH，因此 nvm、Homebrew、pnpm 安装在用户 profile 里的 CLI 通常可以直接找到。合并时只保留绝对路径，`.`、`bin` 等相对条目会被丢弃，避免任务 worktree 里的同名文件劫持 `pnpm`/`git`/`claude`。
+- 如果 shell 启动过慢、读取失败，或 CLI 不在登录 shell 的 PATH 中，App 会沿用 launchd 继承的最小 PATH：
+  - Claude/Codex 预设固定执行 `claude`/`codex`，请确保这两个命令在登录 shell 的 PATH 中。`/usr/local/bin` 不在 launchd 的默认 PATH 里，不要把「链接到 `/usr/local/bin`」当作回退方案；可以改用「自定义 Agent」并填写 CLI 的**绝对路径**，或写一个包装脚本并用绝对路径调用。
   - 自定义 Agent 可以直接在「命令」中填写 CLI 的绝对路径（例如 `/Users/me/.local/bin/my-cli`）。
+- 从 Finder/LaunchServices 启动的 App **不会继承 shell profile 里的其他环境变量**（例如 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、代理配置）。如果 CLI 依赖这些变量，请把它们写进 CLI 自己的配置文件，或用包装脚本在启动时显式设置；AgentGroup 不读取也不保存这些密钥。
 - DeepSeek 等自定义 CLI 需要自己处理登录和 API Key，AgentGroup 不存储密钥。
 
 **任务失败：`setup_copy` 目标未被 `.gitignore` 忽略**
