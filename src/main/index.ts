@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain, Notification, shell } from 'electron'
@@ -5,6 +6,7 @@ import { IPC } from '../shared/ipc'
 import { createAppContext, type AppContext } from './app-context'
 import { createIpcHandlers } from './ipc-handlers'
 import { notifyTaskFinished } from './notifications'
+import { mergeUserPath } from './path-env'
 
 /** 应用上下文在 whenReady 后创建；will-quit 时用来关闭数据库。 */
 let context: AppContext | null = null
@@ -90,9 +92,47 @@ function subscribeTaskNotifications(appContext: AppContext): void {
   })
 }
 
+/**
+ * 合并登录 shell 的 PATH。
+ *
+ * 从 Finder/LaunchServices 启动的 App 继承 launchd 的最小 PATH（通常只有
+ * /usr/bin:/bin:/usr/sbin:/sbin），不包含 nvm、Homebrew、pnpm 等写在用户
+ * shell profile 里的目录。Claude/Codex 预设按固定命令名启动 `claude`/`codex`，
+ * 因此必须在创建任何 Agent 子进程之前补齐 PATH；读取失败时保留继承值，
+ * 让任务以明确的“命令不存在”错误失败，而不是阻止整个应用启动。
+ */
+async function applyLoginShellPath(): Promise<void> {
+  const shellPath = await new Promise<string | null>((resolve) => {
+    execFile(
+      process.env.SHELL || '/bin/zsh',
+      ['-ilc', 'printf %s "$PATH"'],
+      { timeout: 5000 },
+      (error, stdout) => {
+        if (error !== null) {
+          console.warn('读取登录 shell PATH 失败，沿用当前 PATH', error)
+          resolve(null)
+          return
+        }
+        // 交互式登录 shell 可能在 PATH 前打印提示或版本信息，取最后一行非空输出。
+        const lines = stdout
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line !== '')
+        resolve(lines[lines.length - 1] ?? null)
+      }
+    )
+  })
+
+  if (shellPath !== null && shellPath !== '') {
+    process.env.PATH = mergeUserPath(process.env.PATH ?? '', shellPath)
+  }
+}
+
 void app
   .whenReady()
   .then(async () => {
+    // 必须先补齐 PATH，再创建 app context 或启动任何 Agent 子进程。
+    await applyLoginShellPath()
     const userData = app.getPath('userData')
     const appContext = await createAppContext({
       dbPath: join(userData, 'agentgroup.db'),

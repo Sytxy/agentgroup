@@ -155,7 +155,9 @@ xattr -dr com.apple.quarantine /Applications/AgentGroup.app
 **任务失败：Agent 进程启动失败 / 找不到命令**
 
 - 先在终端确认 `claude`、`codex` 已登录并且能直接运行。
-- 从 Finder 启动的 App 不一定继承你的 shell PATH（nvm、pnpm、Homebrew 安装的 CLI 可能不在默认 PATH 中）。把 CLI 链接到 `/usr/local/bin`，或在自定义 Agent 中填写命令的绝对路径（例如 `/Users/me/.local/bin/my-cli`）。
+- App 启动时会读取登录 shell（`$SHELL`，默认 `/bin/zsh`）的 PATH，并合并到自身 PATH，因此 nvm、Homebrew、pnpm 安装在用户 profile 里的 CLI 通常可以直接找到。如果 shell 启动过慢、读取失败，或 CLI 不在登录 shell 的 PATH 中，App 会沿用系统继承的 PATH：
+  - Claude/Codex 预设固定执行 `claude`/`codex`，请确保这两个命令在登录 shell 的 PATH 中，或链接到 `/usr/local/bin`；
+  - 自定义 Agent 可以直接在「命令」中填写 CLI 的绝对路径（例如 `/Users/me/.local/bin/my-cli`）。
 - DeepSeek 等自定义 CLI 需要自己处理登录和 API Key，AgentGroup 不存储密钥。
 
 **任务失败：`setup_copy` 目标未被 `.gitignore` 忽略**

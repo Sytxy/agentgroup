@@ -16,6 +16,17 @@ if (args.includes('--fail')) {
   process.exit(1)
 }
 
+if (args.includes('--write')) {
+  // 用于打包 App 的手动/自动验证：在任务 worktree（当前目录）写入一个文件，
+  // 让任务产生可被 commitAll 提交、并合入 integration 的真实改动。
+  const fs = require('node:fs')
+  const index = args.indexOf('--write')
+  const target = args[index + 1] ?? 'agent-output.txt'
+  fs.writeFileSync(target, 'fake agent output\n')
+  console.log(`wrote ${target}`)
+  process.exit(0)
+}
+
 if (args.includes('--slow')) {
   let index = 0
   // 上限只是防止测试异常时留下永久运行的进程，正常测试会提前 kill。
