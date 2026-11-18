@@ -206,6 +206,38 @@ describe('实时事件与发送', () => {
     expect(unsubscribe).toHaveBeenCalled()
   })
 
+  test('live message arriving during initial history load is kept', async () => {
+    let resolveHistory: ((messages: ChatMessage[]) => void) | null = null
+    const pendingHistory = new Promise<ChatMessage[]>((resolve) => {
+      resolveHistory = resolve
+    })
+    const historyMessage = message('h1', 'user', '历史消息')
+    const { emit } = installApi({
+      ...initialHandlers([]),
+      'chat:history': () => pendingHistory
+    })
+
+    render(<App />)
+    // 订阅建立时 chat:history 仍处于挂起状态
+    await waitFor(() => expect(window.api.onEvent).toHaveBeenCalled())
+
+    const live = message('live-load', 'user', '加载期间的实时消息')
+    act(() => emit({ type: 'message', message: live }))
+    expect(screen.getByText('加载期间的实时消息')).toBeInTheDocument()
+
+    // 历史响应不含实时消息，合并时不能把它覆盖掉
+    await act(async () => {
+      resolveHistory?.([historyMessage])
+    })
+
+    const rendered = await screen.findAllByTestId('message-user')
+    expect(rendered.map((item) => item.textContent)).toEqual([
+      expect.stringContaining('历史消息'),
+      expect.stringContaining('加载期间的实时消息')
+    ])
+    expect(screen.getAllByText('加载期间的实时消息')).toHaveLength(1)
+  })
+
   test('chat:send merges the returned message without duplicating the event', async () => {
     const sent = message('s1', 'user', '大家好')
     let emitEvent: ((event: AppEvent) => void) | null = null

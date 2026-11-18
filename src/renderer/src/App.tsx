@@ -75,9 +75,28 @@ export default function App(): React.JSX.Element {
         if (cancelled) {
           return
         }
-        setMessages(nextMessages)
-        setTasks(nextTasks)
-        setAgents(nextAgents)
+        // 列表响应只是请求发出时的快照。加载期间可能已有实时事件写入 state，
+        // 直接覆盖会丢消息，因此按 id 合并：
+        // - 消息：保留历史顺序，把加载期间到达、快照中没有的消息追加到末尾；
+        // - 任务：同 id 时保留 state 中的版本——它来自请求期间到达的 task-updated，
+        //   一定是比快照更新的观测，响应只补充 state 中尚不存在的任务；
+        // - 成员：没有成员推送事件，列表响应是权威快照，同 id 时以响应为准，
+        //   只保留响应中缺失的成员（成员可能在加载期间被添加）。
+        setMessages((current) => {
+          const historyIds = new Set(nextMessages.map((message) => message.id))
+          return [
+            ...nextMessages,
+            ...current.filter((message) => !historyIds.has(message.id))
+          ]
+        })
+        setTasks((current) => {
+          const responseIds = new Set(nextTasks.map((task) => task.id))
+          return [...nextTasks, ...current.filter((task) => !responseIds.has(task.id))]
+        })
+        setAgents((current) => {
+          const responseIds = new Set(nextAgents.map((agent) => agent.id))
+          return [...nextAgents, ...current.filter((agent) => !responseIds.has(agent.id))]
+        })
         setDiff(nextDiff)
       } catch (cause) {
         if (!cancelled) {
