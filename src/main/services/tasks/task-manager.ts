@@ -22,6 +22,7 @@ import { extractMentionIds } from '../chat/mentions'
 import type { GitService } from '../git/git'
 import { LogWriter } from './log-writer'
 import type { SetupRunner } from './setup-runner'
+import type { TaskFactory } from './task-factory'
 
 /** 群里进度系统消息的节流间隔：每分钟最多一条，避免刷屏 */
 const PROGRESS_MESSAGE_INTERVAL_MS = 60_000
@@ -41,6 +42,8 @@ export interface TaskManagerDeps {
   setup: SetupRunner
   adapters: AdapterFactory
   events: EventBus
+  /** 统一创建任务 + task-card 消息；委派任务通过它延迟到父任务合并后启动 */
+  factory: TaskFactory
   worktreesRoot: string
   logsRoot: string
   now?: () => Date
@@ -69,6 +72,7 @@ export class TaskManager {
   private readonly setup: SetupRunner
   private readonly adapters: AdapterFactory
   private readonly events: EventBus
+  private readonly factory: TaskFactory
   private readonly worktreesRoot: string
   private readonly logsRoot: string
   private readonly now: () => Date
@@ -83,6 +87,8 @@ export class TaskManager {
   private readonly busyAgents = new Map<string, string>()
   /** 用户主动取消的任务；与超时区分，决定终态是 cancelled 还是 failed */
   private readonly cancelRequested = new Set<string>()
+  /** cancelAll 开始后停止调度，避免已取消任务的收尾 schedule() 又启动新的任务 */
+  private shuttingDown = false
 
   constructor(deps: TaskManagerDeps) {
     this.tasks = deps.tasks
@@ -93,6 +99,7 @@ export class TaskManager {
     this.setup = deps.setup
     this.adapters = deps.adapters
     this.events = deps.events
+    this.factory = deps.factory
     this.worktreesRoot = deps.worktreesRoot
     this.logsRoot = deps.logsRoot
     this.now = deps.now ?? (() => new Date())
@@ -304,6 +311,44 @@ export class TaskManager {
     await this.onAbandon(taskId)
   }
 
+  /**
+   * 退出应用前取消所有正在运行的任务。
+   *
+   * 子进程以独立进程组启动，主进程直接退出会留下孤儿 Agent（可能仍在改动
+   * worktree）。这里对每个活动任务合成一次“用户取消”，触发适配器的 AbortSignal
+   * 与进程组 SIGTERM，并等待它们收尾。等待最多 5 秒：个别 CLI 不响应 SIGTERM 时
+   * 也不能让退出流程无限挂起（ChildProcessRunner 会继续在后台升级为 SIGKILL）。
+   */
+  async cancelAll(): Promise<void> {
+    // 先关闭调度入口：活动任务收到 abort 后会在 launch 的 finally 里再次调用
+    // schedule()，如果不拦住，排队任务会在退出前被启动成新的孤儿进程。
+    this.shuttingDown = true
+    const active = [...this.running.entries()]
+    if (active.length === 0) {
+      return
+    }
+
+    for (const [taskId] of active) {
+      this.cancelRequested.add(taskId)
+      this.running.get(taskId)?.controller.abort()
+    }
+
+    let timer: NodeJS.Timeout | undefined
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, 5000)
+    })
+    try {
+      await Promise.race([
+        Promise.allSettled(active.map(([, running]) => running.done)),
+        timeout
+      ])
+    } finally {
+      if (timer !== undefined) {
+        clearTimeout(timer)
+      }
+    }
+  }
+
   /** 收集所有工作区的排队任务并按 createdAt 正序排列 */
   private collectQueued(): Task[] {
     const queued: Task[] = []
@@ -327,8 +372,15 @@ export class TaskManager {
 
   /** 为每个空闲 Agent 启动其最早的排队任务 */
   private schedule(): void {
+    // cancelAll 之后不再启动任何新任务
+    if (this.shuttingDown) {
+      return
+    }
     for (const task of this.collectQueued()) {
       if (this.running.has(task.id)) {
+        continue
+      }
+      if (!this.isReady(task)) {
         continue
       }
       if (this.busyAgents.has(task.agentId)) {
@@ -336,6 +388,23 @@ export class TaskManager {
       }
       this.launch(task)
     }
+  }
+
+  /**
+   * 排队任务是否已具备启动条件。
+   *
+   * 委派任务（code 且带 parentTaskId）在父任务结束时就已创建，但必须等父任务
+   * 真正合入 integration 后才能启动，否则子 Agent 基于缺少父任务改动的代码工作。
+   * 这里以父任务状态作为持久化判据：重启后即使内存中的延迟入队记录丢失，
+   * 调度器也不会抢跑；父任务合并完成后由 TaskFactory.enqueueDeferredChildren 触发调度。
+   * 用户直接分派的任务 parentTaskId 为 null，test/resolve 任务也不受此限制。
+   */
+  private isReady(task: Task): boolean {
+    if (task.taskType !== 'code' || task.parentTaskId === null) {
+      return true
+    }
+    const parent = this.tasks.get(task.parentTaskId)
+    return parent !== null && parent.status === 'merged'
   }
 
   private launch(task: Task): void {
@@ -584,8 +653,9 @@ export class TaskManager {
     this.emitTask(task.id)
     this.addSystemMessage(task, terminalMessage(status, task.title, summary))
 
-    // 成功任务先处理 Agent 委派：委派只依赖摘要与 Agent 配置，放在合并回调之前，
-    // 让委派任务尽早入队。失败/取消不触发委派；委派异常只记录，不影响终态与合并。
+    // 成功任务先处理 Agent 委派：委派只依赖摘要与 Agent 配置，放在合并回调之前
+    // 创建任务卡片，但委派任务会延迟到父任务 merged 后才入队（见 maybeDelegate）。
+    // 失败/取消不触发委派；委派异常只记录，不影响终态与合并。
     if (status === 'done') {
       try {
         this.maybeDelegate(task, summary)
@@ -671,28 +741,18 @@ export class TaskManager {
       return
     }
 
-    // 委派任务的 prompt 直接使用摘要原文，让目标 Agent 看到前序工作的完整结论
-    const delegated: Task = {
-      id: randomUUID(),
+    // 委派任务的 prompt 直接使用摘要原文，让目标 Agent 看到前序工作的完整结论。
+    // 关键：此时父任务刚刚 done，改动还没有合入 integration，必须延迟入队
+    // （deferEnqueue），由 MergeCoordinator 在父任务 merged 后统一放行。
+    this.factory.create({
       workspaceId: task.workspaceId,
       agentId: target.id,
       parentTaskId: task.id,
       taskType: 'code',
       title: `委派：${target.name}`,
       prompt: summary,
-      branch: null,
-      worktreePath: null,
-      baseRef: null,
-      status: 'queued',
-      exitCode: null,
-      summary: null,
-      createdAt: this.now().toISOString(),
-      startedAt: null,
-      finishedAt: null
-    }
-    this.tasks.insert(delegated)
-    this.emitTask(delegated.id)
-    this.enqueue(delegated.id)
+      deferEnqueue: true
+    })
   }
 
   private emitTask(taskId: string): void {

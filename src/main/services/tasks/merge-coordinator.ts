@@ -8,7 +8,6 @@
  * 所有合并动作（包括审批、手动解决后的重试）都经过同一个 SerialQueue，
  * 保证同一时刻只有一个合并操作修改 integration 工作区。
  */
-import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
@@ -20,6 +19,7 @@ import type { EventBus } from '../../events'
 import type { GitService } from '../git/git'
 import { outOfScopeFiles } from '../git/path-scope'
 import type { SerialQueue } from '../git/serial-queue'
+import type { TaskFactory } from './task-factory'
 
 /**
  * 可以放弃的状态：任务已经不再由 Agent 执行，也没有正在进行的合并。
@@ -35,6 +35,22 @@ const ABANDONABLE_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
   'interrupted'
 ])
 
+/**
+ * 仍在占用父冲突任务现场的解决任务状态。
+ *
+ * 解决任务与父冲突任务共享同一分支和 worktree；只要它还没进入终态
+ * （failed/cancelled/interrupted/abandoned），父任务的“指派/打开/标记/放弃”
+ * 都可能与正在运行的 Agent 同时操作同一目录，造成现场损坏或重复解决任务。
+ * done/merging 也算占用：任务已提交但尚未合入，现场仍需保留给合并队列。
+ */
+const ACTIVE_RESOLVE_CHILD_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
+  'queued',
+  'preparing',
+  'running',
+  'done',
+  'merging'
+])
+
 export interface MergeCoordinatorDeps {
   queue: SerialQueue
   git: GitService
@@ -42,8 +58,8 @@ export interface MergeCoordinatorDeps {
   agents: AgentRepo
   workspaces: WorkspaceRepo
   events: EventBus
-  /** 解决任务插入后重新触发调度，走 TaskManager 的同一套排队逻辑 */
-  enqueue: (taskId: string) => void
+  /** 统一创建任务 + task-card 消息，并在父任务合并后放行委派子任务 */
+  factory: TaskFactory
   integrationWorktreePath: (workspaceId: string) => string
 }
 
@@ -54,7 +70,7 @@ export class MergeCoordinator {
   private readonly agents: AgentRepo
   private readonly workspaces: WorkspaceRepo
   private readonly events: EventBus
-  private readonly enqueue: (taskId: string) => void
+  private readonly factory: TaskFactory
   private readonly integrationWorktreePath: (workspaceId: string) => string
 
   constructor(deps: MergeCoordinatorDeps) {
@@ -64,7 +80,7 @@ export class MergeCoordinator {
     this.agents = deps.agents
     this.workspaces = deps.workspaces
     this.events = deps.events
-    this.enqueue = deps.enqueue
+    this.factory = deps.factory
     this.integrationWorktreePath = deps.integrationWorktreePath
   }
 
@@ -111,29 +127,14 @@ export class MergeCoordinator {
       return null
     }
 
-    const test: Task = {
-      id: randomUUID(),
+    const test = this.factory.create({
       workspaceId: workspace.id,
       agentId: agent.id,
       parentTaskId: mergedTask.id,
       taskType: 'test',
       title: `验证：${mergedTask.title}`,
-      prompt: workspace.testTaskTemplate,
-      branch: null,
-      worktreePath: null,
-      baseRef: null,
-      status: 'queued',
-      exitCode: null,
-      summary: null,
-      createdAt: new Date().toISOString(),
-      startedAt: null,
-      finishedAt: null
-    }
-
-    this.tasks.insert(test)
-    // 先广播任务卡片，再入队调度，UI 不必等调度结果就能看到验证任务
-    this.emitTask(test.id)
-    this.enqueue(test.id)
+      prompt: workspace.testTaskTemplate
+    })
     return test
   }
 
@@ -157,35 +158,37 @@ export class MergeCoordinator {
     if (conflict.status !== 'conflict') {
       throw new Error(`只为冲突任务创建解决任务：${taskId}`)
     }
+    // 一个冲突现场同一时间只能有一个解决任务：两个解决任务会共享同一分支和
+    // worktree，彼此覆盖对方的提交，且 UI 无法区分谁的改动。
+    if (this.activeResolveChild(conflict.id) !== null) {
+      throw new Error('已有进行中的解决任务，请先处理该任务')
+    }
     if (conflict.branch === null || conflict.worktreePath === null || conflict.baseRef === null) {
       throw new Error(`冲突任务缺少分支或 worktree 现场：${taskId}`)
     }
 
+    // 解决 Agent 必须属于同一工作区且处于启用状态：跨工作区或已停用的 Agent
+    // 无法由本工作区的调度器执行，创建后只会留下永远排队的任务卡片。
+    const agent = this.agents.get(agentId)
+    if (agent === null || agent.workspaceId !== conflict.workspaceId) {
+      throw new Error(`解决 Agent 不存在或不属于该工作区：${agentId}`)
+    }
+    if (!agent.enabled) {
+      throw new Error(`解决 Agent 已停用：${agent.name}`)
+    }
+
     const workspace = this.loadWorkspace(conflict)
-    const now = new Date().toISOString()
-    const resolve: Task = {
-      id: randomUUID(),
+    const resolve = this.factory.create({
       workspaceId: conflict.workspaceId,
-      agentId,
+      agentId: agent.id,
       parentTaskId: conflict.id,
       taskType: 'resolve',
       title: `解决冲突：${conflict.title}`,
       prompt: `请将 ${workspace.integrationBranch} 合并到当前分支，解决冲突后提交。\n\n原始任务：${conflict.title}`,
       branch: conflict.branch,
       worktreePath: conflict.worktreePath,
-      baseRef: conflict.baseRef,
-      status: 'queued',
-      exitCode: null,
-      summary: null,
-      createdAt: now,
-      startedAt: null,
-      finishedAt: null
-    }
-
-    this.tasks.insert(resolve)
-    // 先广播任务卡片，再入队调度，UI 不必等调度结果就能看到解决任务
-    this.emitTask(resolve.id)
-    this.enqueue(resolve.id)
+      baseRef: conflict.baseRef
+    })
     return resolve
   }
 
@@ -219,6 +222,11 @@ export class MergeCoordinator {
   markManuallyResolved(taskId: string): Promise<void> {
     return this.queue.run(async () => {
       const task = this.loadTask(taskId)
+      // 解决 Agent 正在同一 worktree 中工作时，用户的手动提交会与其竞争
+      // index.lock 和文件内容，必须先处理完（或放弃）该解决任务。
+      if (this.activeResolveChild(task.id) !== null) {
+        throw new Error('已有进行中的解决任务，请先处理该任务')
+      }
       if (task.status !== 'conflict') {
         throw new Error(`只有冲突任务可以标记为已解决：${taskId}`)
       }
@@ -240,6 +248,10 @@ export class MergeCoordinator {
   abandon(taskId: string): Promise<void> {
     return this.queue.run(async () => {
       const task = this.loadTask(taskId)
+      // 解决任务仍在运行时删除父任务 worktree 会破坏正在执行的 Agent 现场。
+      if (this.activeResolveChild(task.id) !== null) {
+        throw new Error('已有进行中的解决任务，请先处理该任务')
+      }
       // 运行中或已合并的任务不能放弃：前者会破坏 Agent 现场，后者会回退已合入的状态
       if (!ABANDONABLE_STATUSES.has(task.status)) {
         throw new Error(`只有未合并的任务可以放弃：${taskId}`)
@@ -267,6 +279,8 @@ export class MergeCoordinator {
       await this.removeWorktree(workspace, task)
       this.updateTask(task.id, { status: 'merged', summary: '无代码改动' })
       this.emitTask(task.id)
+      // 父任务已进入 integration，委派子任务现在才能基于包含父任务改动的代码启动
+      this.releaseDelegatedChildren(task)
       // 创建验证任务失败只记录日志，不能影响已经完成的合并
       try {
         this.maybeCreateTestTask(workspace, task)
@@ -335,6 +349,9 @@ export class MergeCoordinator {
     this.updateTask(task.id, { status: 'merged' })
     this.emitTask(task.id)
 
+    // 只有 code 任务会派生子任务；test/resolve 没有需要放行的子任务
+    this.releaseDelegatedChildren(task)
+
     // 创建验证任务失败只记录日志，不能影响已经完成的合并
     try {
       this.maybeCreateTestTask(workspace, task)
@@ -354,6 +371,25 @@ export class MergeCoordinator {
         })
         this.emitTask(parent.id)
       }
+    }
+  }
+
+  /**
+   * 代码任务合入 integration 后放行它的委派子任务。
+   *
+   * 委派任务在父任务成功结束时创建，但此时父任务的改动还没有进入 integration；
+   * 如果立刻启动，子 Agent 会基于缺少父任务改动的代码工作。因此委派任务创建时
+   * 延迟入队，只有父任务真正 merged（包括无改动直接 merged）后才放行。
+   * 放行失败只记录日志，不能把已经合入的任务回退为失败。
+   */
+  private releaseDelegatedChildren(task: Task): void {
+    if (task.taskType !== 'code') {
+      return
+    }
+    try {
+      this.factory.enqueueDeferredChildren(task.id)
+    } catch (error) {
+      console.error(`启动委派任务失败：${task.id}`, error)
     }
   }
 
@@ -378,6 +414,23 @@ export class MergeCoordinator {
       throw new Error(`任务不存在：${taskId}`)
     }
     return task
+  }
+
+  /** 查找父任务当前仍占用现场的解决任务；没有时返回 null */
+  private activeResolveChild(parentTaskId: string): Task | null {
+    const parent = this.tasks.get(parentTaskId)
+    if (parent === null) {
+      return null
+    }
+    const child = this.tasks
+      .listByWorkspace(parent.workspaceId)
+      .find(
+        (task) =>
+          task.taskType === 'resolve' &&
+          task.parentTaskId === parentTaskId &&
+          ACTIVE_RESOLVE_CHILD_STATUSES.has(task.status)
+      )
+    return child ?? null
   }
 
   private loadWorkspace(task: Task): Workspace {

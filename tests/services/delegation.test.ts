@@ -11,6 +11,7 @@ import { AgentRunError, type AgentAdapter } from '../../src/main/services/agents
 import { extractMentionIds } from '../../src/main/services/chat/mentions'
 import { GitService } from '../../src/main/services/git/git'
 import { SetupRunner } from '../../src/main/services/tasks/setup-runner'
+import { TaskFactory } from '../../src/main/services/tasks/task-factory'
 import { TaskManager } from '../../src/main/services/tasks/task-manager'
 import { WorkspaceService } from '../../src/main/services/workspace-service'
 import type { AgentConfig, AppEvent, Task, Workspace } from '../../src/shared/types'
@@ -32,6 +33,8 @@ let git: GitService
 let workspace: Workspace
 let worktreesRoot: string
 let logsRoot: string
+let taskFactory: TaskFactory
+let activeManager: TaskManager | undefined
 
 beforeEach(async () => {
   tempRepo = await createTempRepo()
@@ -48,6 +51,14 @@ beforeEach(async () => {
     name: 'Demo',
     repoPath: tempRepo.path
   })
+  // 工厂与调度器互相引用：enqueue 在真正创建委派任务时才读取 activeManager。
+  taskFactory = new TaskFactory({
+    tasks,
+    messages,
+    events,
+    enqueue: (taskId) => activeManager?.enqueue(taskId)
+  })
+  activeManager = undefined
 })
 
 afterEach(async () => {
@@ -101,7 +112,7 @@ function insertTask(overrides: Partial<Task> = {}): Task {
 /** 按 Agent 装配适配器；未映射的 Agent 使用空脚本适配器，不会产生委派或改动 */
 function createManager(adapters: Record<string, AgentAdapter>): TaskManager {
   const fallback = new FakeAdapter()
-  return new TaskManager({
+  const manager = new TaskManager({
     tasks,
     agents,
     workspaces,
@@ -110,9 +121,12 @@ function createManager(adapters: Record<string, AgentAdapter>): TaskManager {
     setup: new SetupRunner(),
     adapters: { create: (agent) => adapters[agent.id] ?? fallback },
     events,
+    factory: taskFactory,
     worktreesRoot,
     logsRoot
   })
+  activeManager = manager
+  return manager
 }
 
 /**
@@ -238,6 +252,20 @@ describe('agent delegation', () => {
     // 任务已落库且只创建一次；v1 只为第一个合格提及创建任务，@gemini 被忽略
     expect(tasks.get(delegated.id)?.parentTaskId).toBe(task.id)
     expect(childrenOf(task.id).map((child) => child.agentId)).toEqual(['agent-codex'])
+    // 委派任务与普通任务一样有 task-card 消息，ChatTimeline 才能渲染卡片
+    const card = messages
+      .listByWorkspace(workspace.id)
+      .find((message) => message.kind === 'task-card' && message.taskId === delegated.id)
+    expect(card?.content).toBe(delegated.title)
+
+    // 父任务尚未合入 integration：即使调度器再次运行，委派任务也不能启动
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(codexAdapter.runs).toHaveLength(0)
+    expect(tasks.get(delegated.id)?.status).toBe('queued')
+
+    // 模拟父任务合入 integration 后由合并协调器放行；此时才能看到父任务的改动
+    tasks.update(task.id, { status: 'merged' })
+    taskFactory.enqueueDeferredChildren(task.id)
     await waitFor(() => codexAdapter.runs.length === 1)
     expect(codexAdapter.runs[0]?.prompt).toContain(summary)
     // 委派任务自身成功结束后不会再委派（目标 Agent canDelegate 为 false）
@@ -264,8 +292,9 @@ describe('agent delegation', () => {
     insertAgent({ id: 'agent-codex', name: 'codex', canDelegate: false })
 
     // root(0) -> d1(1) -> d2(2)：d2 再委派产生深度 3 的任务，应当允许
+    // d1 已合入 integration，d2 才具备启动条件（委派任务等待父任务 merged）
     const root = insertTask({ title: 'root', status: 'done' })
-    const d1 = insertTask({ title: 'd1', status: 'done', parentTaskId: root.id })
+    const d1 = insertTask({ title: 'd1', status: 'merged', parentTaskId: root.id })
     const d2 = insertTask({ title: 'd2', status: 'queued', parentTaskId: d1.id })
 
     const claudeAdapter = adapterWithSummary('继续 @codex')
@@ -278,6 +307,10 @@ describe('agent delegation', () => {
     const delegated = childrenOf(d2.id)[0] as Task
     expect(delegated.parentTaskId).toBe(d2.id)
     expect(delegated.agentId).toBe('agent-codex')
+    // d2 尚未合并，深度 3 的委派任务保持排队
+    expect(tasks.get(delegated.id)?.status).toBe('queued')
+    tasks.update(d2.id, { status: 'merged' })
+    taskFactory.enqueueDeferredChildren(d2.id)
     await waitFor(() => tasks.get(delegated.id)?.status === 'done')
   })
 
@@ -288,7 +321,7 @@ describe('agent delegation', () => {
     // root(0) -> d1(1) -> d2(2) -> d3(3)：d3 再委派会是深度 4，必须拒绝
     const root = insertTask({ title: 'root', status: 'done' })
     const d1 = insertTask({ title: 'd1', status: 'done', parentTaskId: root.id })
-    const d2 = insertTask({ title: 'd2', status: 'done', parentTaskId: d1.id })
+    const d2 = insertTask({ title: 'd2', status: 'merged', parentTaskId: d1.id })
     const d3 = insertTask({ title: 'd3', status: 'queued', parentTaskId: d2.id })
 
     const claudeAdapter = adapterWithSummary('继续 @codex')
@@ -317,7 +350,8 @@ describe('agent delegation', () => {
     insertAgent({ id: 'agent-codex', name: 'codex', canDelegate: true })
 
     // A 已经完成 root，B 在 root 下面执行时再提及 A，会形成 A->B->A 环
-    const root = insertTask({ title: 'root', agentId: 'agent-claude', status: 'done' })
+    // root 已合入，current 才有启动条件
+    const root = insertTask({ title: 'root', agentId: 'agent-claude', status: 'merged' })
     const current = insertTask({
       title: 'current',
       agentId: 'agent-codex',
@@ -349,6 +383,10 @@ describe('agent delegation', () => {
     const delegated = childrenOf(task.id)[0] as Task
     expect(delegated.agentId).toBe('agent-gemini')
     expect(delegated.title).toBe('委派：gemini')
+    // 父任务合并前保持排队，合并后由合并协调器放行
+    expect(tasks.get(delegated.id)?.status).toBe('queued')
+    tasks.update(task.id, { status: 'merged' })
+    taskFactory.enqueueDeferredChildren(task.id)
     await waitFor(() => tasks.get(delegated.id)?.status === 'done')
   })
 

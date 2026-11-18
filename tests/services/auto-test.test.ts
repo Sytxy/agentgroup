@@ -11,6 +11,7 @@ import { GitService } from '../../src/main/services/git/git'
 import { SerialQueue } from '../../src/main/services/git/serial-queue'
 import { MergeCoordinator } from '../../src/main/services/tasks/merge-coordinator'
 import { SetupRunner } from '../../src/main/services/tasks/setup-runner'
+import { TaskFactory } from '../../src/main/services/tasks/task-factory'
 import { TaskManager } from '../../src/main/services/tasks/task-manager'
 import {
   INTEGRATION_BRANCH,
@@ -44,6 +45,7 @@ let logsRoot: string
 let coordinator: MergeCoordinator
 let enqueued: string[]
 let seen: AppEvent[]
+let taskFactory: TaskFactory
 
 beforeEach(async () => {
   tempRepo = await createTempRepo()
@@ -61,6 +63,14 @@ beforeEach(async () => {
   enqueued = []
   seen = []
   events.on((event) => seen.push(event))
+  // 协调器创建测试任务时通过工厂写入卡片消息并入队；本文件用数组记录入队，
+  // 测试任务本身由各用例显式交给 TaskManager.start 调度。
+  taskFactory = new TaskFactory({
+    tasks,
+    messages,
+    events,
+    enqueue: (taskId) => enqueued.push(taskId)
+  })
   coordinator = new MergeCoordinator({
     queue: new SerialQueue(),
     git,
@@ -68,7 +78,7 @@ beforeEach(async () => {
     agents,
     workspaces,
     events,
-    enqueue: (taskId) => enqueued.push(taskId),
+    factory: taskFactory,
     integrationWorktreePath: (workspaceId) =>
       workspaceService.integrationWorktreePath(workspaceId)
   })
@@ -208,6 +218,7 @@ function createManager(
     setup: new SetupRunner(),
     adapters: { create: () => adapter },
     events,
+    factory: taskFactory,
     worktreesRoot,
     logsRoot,
     ...overrides
@@ -249,6 +260,11 @@ describe('MergeCoordinator.maybeCreateTestTask', () => {
     expect(testEvents).toHaveLength(1)
     expect(testEvents[0]?.task).toEqual(testTask)
     expect(enqueued).toEqual([testTask.id])
+    // 自动测试任务同样有 task-card 消息，ChatTimeline 才能渲染任务卡片
+    const card = messages
+      .listByWorkspace(workspace.id)
+      .find((message) => message.kind === 'task-card' && message.taskId === testTask.id)
+    expect(card?.content).toBe(testTask.title)
   })
 
   test('disabled setting creates no test task', async () => {

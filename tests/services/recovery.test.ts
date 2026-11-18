@@ -10,6 +10,7 @@ import { WorkspaceRepo } from '../../src/main/db/workspace-repo'
 import { EventBus } from '../../src/main/events'
 import { GitService, runGit } from '../../src/main/services/git/git'
 import { SetupRunner } from '../../src/main/services/tasks/setup-runner'
+import { TaskFactory } from '../../src/main/services/tasks/task-factory'
 import { TaskManager } from '../../src/main/services/tasks/task-manager'
 import {
   INTEGRATION_BRANCH,
@@ -106,7 +107,14 @@ function createManager(
   adapter: FakeAdapter,
   overrides: Partial<ConstructorParameters<typeof TaskManager>[0]> = {}
 ): TaskManager {
-  return new TaskManager({
+  let manager!: TaskManager
+  const factory = new TaskFactory({
+    tasks,
+    messages,
+    events,
+    enqueue: (taskId) => manager.enqueue(taskId)
+  })
+  manager = new TaskManager({
     tasks,
     agents,
     workspaces,
@@ -115,10 +123,12 @@ function createManager(
     setup: new SetupRunner(),
     adapters: { create: () => adapter },
     events,
+    factory,
     worktreesRoot,
     logsRoot,
     ...overrides
   })
+  return manager
 }
 
 async function waitFor(condition: () => boolean, timeoutMs = 4000): Promise<void> {

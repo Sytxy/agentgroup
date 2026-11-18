@@ -22,6 +22,7 @@ import { GitService } from '../../src/main/services/git/git'
 import { SerialQueue } from '../../src/main/services/git/serial-queue'
 import { MergeCoordinator } from '../../src/main/services/tasks/merge-coordinator'
 import { SetupRunner } from '../../src/main/services/tasks/setup-runner'
+import { TaskFactory } from '../../src/main/services/tasks/task-factory'
 import { TaskManager } from '../../src/main/services/tasks/task-manager'
 import { WorkspaceService } from '../../src/main/services/workspace-service'
 import { createTestDb, type TestDb } from './db'
@@ -156,6 +157,12 @@ export async function createTestContext(options: TestContextOptions): Promise<Te
     const integrationWorktreePath = (workspaceId: string): string =>
       workspaceService.integrationWorktreePath(workspaceId)
     let taskManager!: TaskManager
+    const taskFactory = new TaskFactory({
+      tasks,
+      messages,
+      events,
+      enqueue: (taskId) => taskManager.enqueue(taskId)
+    })
     const coordinator = new MergeCoordinator({
       queue: new SerialQueue(),
       git,
@@ -163,7 +170,7 @@ export async function createTestContext(options: TestContextOptions): Promise<Te
       agents,
       workspaces,
       events,
-      enqueue: (taskId) => taskManager.enqueue(taskId),
+      factory: taskFactory,
       integrationWorktreePath
     })
 
@@ -176,6 +183,7 @@ export async function createTestContext(options: TestContextOptions): Promise<Te
       setup: new SetupRunner(),
       adapters: new ScriptedAdapterFactory(scripts),
       events,
+      factory: taskFactory,
       worktreesRoot,
       logsRoot,
       onTaskDone: (taskId) => coordinator.mergeTask(taskId),
@@ -186,9 +194,9 @@ export async function createTestContext(options: TestContextOptions): Promise<Te
 
     const dispatcher = new Dispatcher({
       agents,
-      tasks,
       messages,
       events,
+      factory: taskFactory,
       enqueue: (taskId) => taskManager.enqueue(taskId)
     })
 

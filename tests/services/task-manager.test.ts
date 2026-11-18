@@ -11,6 +11,7 @@ import { EventBus } from '../../src/main/events'
 import { AgentRunError, type AgentAdapter } from '../../src/main/services/agents/adapter'
 import { GitService } from '../../src/main/services/git/git'
 import { SetupRunner } from '../../src/main/services/tasks/setup-runner'
+import { TaskFactory } from '../../src/main/services/tasks/task-factory'
 import { TaskManager } from '../../src/main/services/tasks/task-manager'
 import {
   INTEGRATION_BRANCH,
@@ -106,7 +107,14 @@ function insertTask(overrides: Partial<Task> = {}): Task {
 }
 
 function createManager(adapter: AgentAdapter): TaskManager {
-  return new TaskManager({
+  let manager!: TaskManager
+  const factory = new TaskFactory({
+    tasks,
+    messages,
+    events,
+    enqueue: (taskId) => manager.enqueue(taskId)
+  })
+  manager = new TaskManager({
     tasks,
     agents,
     workspaces,
@@ -115,9 +123,11 @@ function createManager(adapter: AgentAdapter): TaskManager {
     setup: new SetupRunner(),
     adapters: { create: () => adapter },
     events,
+    factory,
     worktreesRoot,
     logsRoot
   })
+  return manager
 }
 
 /** 轮询等待条件成立；条件始终不成立时抛出可读错误，避免测试卡死 */
@@ -424,6 +434,53 @@ describe('TaskManager', () => {
     expect(stored.finishedAt).toEqual(expect.any(String))
     expect(adapter.runs[0]?.signal.aborted).toBe(true)
     expect(adapter.active).toBe(0)
+  })
+
+  test('cancelAll aborts every active task and resolves promptly', async () => {
+    insertAgent({ id: 'agent-claude', name: 'claude' })
+    insertAgent({ id: 'agent-codex', name: 'codex' })
+    const adapter = new FakeAdapter({
+      steps: [{ delayMs: 5000, event: { type: 'final', summary: '不会到达' } }]
+    })
+    const first = insertTask({
+      title: 'First',
+      agentId: 'agent-claude',
+      createdAt: '2026-11-18T10:00:00.000Z'
+    })
+    const second = insertTask({
+      title: 'Second',
+      agentId: 'agent-codex',
+      createdAt: '2026-11-18T10:00:01.000Z'
+    })
+    // 同一 Agent 的第三个任务只能排队；取消收尾时不能被重新调度启动
+    const queued = insertTask({
+      title: 'Queued',
+      agentId: 'agent-claude',
+      createdAt: '2026-11-18T10:00:02.000Z'
+    })
+
+    const manager = createManager(adapter)
+    manager.start()
+    await waitFor(
+      () =>
+        adapter.runs.length === 2 &&
+        tasks.get(first.id)?.status === 'running' &&
+        tasks.get(second.id)?.status === 'running'
+    )
+
+    const startedAt = Date.now()
+    await manager.cancelAll()
+    const elapsed = Date.now() - startedAt
+
+    // 退出前必须同时结束所有 Agent，而不是只取消第一个
+    expect(tasks.get(first.id)?.status).toBe('cancelled')
+    expect(tasks.get(second.id)?.status).toBe('cancelled')
+    expect(tasks.get(queued.id)?.status).toBe('queued')
+    expect(adapter.runs).toHaveLength(2)
+    expect(adapter.runs.every((run) => run.signal.aborted)).toBe(true)
+    expect(adapter.active).toBe(0)
+    // 两个适配器都在等待 5 秒；cancelAll 应在取消信号后立即返回
+    expect(elapsed).toBeLessThan(3000)
   })
 
   test('adapter failure marks the task failed with its message', async () => {

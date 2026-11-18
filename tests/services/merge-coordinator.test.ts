@@ -12,6 +12,7 @@ import { GitService } from '../../src/main/services/git/git'
 import { SerialQueue } from '../../src/main/services/git/serial-queue'
 import { MergeCoordinator } from '../../src/main/services/tasks/merge-coordinator'
 import { SetupRunner } from '../../src/main/services/tasks/setup-runner'
+import { TaskFactory } from '../../src/main/services/tasks/task-factory'
 import { TaskManager } from '../../src/main/services/tasks/task-manager'
 import {
   INTEGRATION_BRANCH,
@@ -39,6 +40,7 @@ let logsRoot: string
 let coordinator: MergeCoordinator
 let enqueued: string[]
 let seen: AppEvent[]
+let taskFactory: TaskFactory
 
 beforeEach(async () => {
   tempRepo = await createTempRepo()
@@ -56,6 +58,12 @@ beforeEach(async () => {
   enqueued = []
   seen = []
   events.on((event) => seen.push(event))
+  taskFactory = new TaskFactory({
+    tasks,
+    messages,
+    events,
+    enqueue: (taskId) => enqueued.push(taskId)
+  })
   coordinator = new MergeCoordinator({
     queue: new SerialQueue(),
     git,
@@ -63,7 +71,7 @@ beforeEach(async () => {
     agents,
     workspaces,
     events,
-    enqueue: (taskId) => enqueued.push(taskId),
+    factory: taskFactory,
     integrationWorktreePath: (workspaceId) =>
       workspaceService.integrationWorktreePath(workspaceId)
   })
@@ -169,6 +177,30 @@ function recordStatuses(taskId: string): string[] {
     .map((event) => event.task.status)
 }
 
+/** 插入一个等待父任务合并的委派子任务（与 TaskManager.maybeDelegate 的落库结果一致） */
+function insertQueuedChild(parent: Task): Task {
+  const child: Task = {
+    id: randomUUID(),
+    workspaceId: parent.workspaceId,
+    agentId: parent.agentId,
+    parentTaskId: parent.id,
+    taskType: 'code',
+    title: '委派：claude',
+    prompt: '继续完成后续工作',
+    branch: null,
+    worktreePath: null,
+    baseRef: null,
+    status: 'queued',
+    exitCode: null,
+    summary: null,
+    createdAt: FIXED_TIME,
+    startedAt: null,
+    finishedAt: null
+  }
+  tasks.insert(child)
+  return child
+}
+
 function createManager(
   adapter: FakeAdapter,
   overrides: Partial<ConstructorParameters<typeof TaskManager>[0]> = {}
@@ -182,6 +214,7 @@ function createManager(
     setup: new SetupRunner(),
     adapters: { create: () => adapter },
     events,
+    factory: taskFactory,
     worktreesRoot,
     logsRoot,
     ...overrides
@@ -214,6 +247,30 @@ describe('MergeCoordinator', () => {
 
     expect(await readFile(join(integrationPath(), 'FEATURE.md'), 'utf8')).toBe('feature\n')
     expect(await git.head(integrationPath())).not.toBe(integrationHead)
+  })
+
+  test('delegated child is released only after the parent actually merges', async () => {
+    insertAgent()
+    const parent = await createDoneTask({ files: { 'PARENT.md': 'parent\n' } })
+    const child = insertQueuedChild(parent)
+
+    expect(enqueued).toEqual([])
+    await coordinator.mergeTask(parent.id)
+
+    expect(tasks.get(parent.id)?.status).toBe('merged')
+    // 父任务改动已经进入 integration，此时才允许子任务启动
+    expect(enqueued).toEqual([child.id])
+  })
+
+  test('delegated child is released after a no-change parent reaches merged', async () => {
+    insertAgent()
+    const parent = await createDoneTask()
+    const child = insertQueuedChild(parent)
+
+    await coordinator.mergeTask(parent.id)
+
+    expect(tasks.get(parent.id)).toMatchObject({ status: 'merged', summary: '无代码改动' })
+    expect(enqueued).toEqual([child.id])
   })
 
   test('merged task worktree is removed after merge but its branch is kept', async () => {
@@ -362,6 +419,11 @@ describe('MergeCoordinator', () => {
     expect(resolveEvents).toHaveLength(1)
     expect(resolveEvents[0]?.task).toEqual(resolve)
     expect(enqueued).toEqual([resolve.id])
+    // 解决任务也必须有 task-card 消息，群聊里才能看到并操作它
+    const card = messages
+      .listByWorkspace(workspace.id)
+      .find((message) => message.kind === 'task-card' && message.taskId === resolve.id)
+    expect(card?.content).toBe(resolve.title)
   })
 
   test('createResolveTask rejects a task that is not in conflict', async () => {
@@ -371,6 +433,62 @@ describe('MergeCoordinator', () => {
     expect(() => coordinator.createResolveTask(task.id, 'agent-claude')).toThrow(
       '只为冲突任务创建解决任务'
     )
+  })
+
+  test('an active resolve child blocks abandon, mark and re-assignment', async () => {
+    insertAgent()
+    const conflict = await createConflictTask()
+    const resolve = coordinator.createResolveTask(conflict.id, 'agent-claude')
+
+    // 解决任务与父任务共享 worktree；在其运行/待合并期间，父任务卡片的
+    // 放弃、手动标记和再次指派都必须被拒绝，避免两个操作同时改同一现场。
+    await expect(coordinator.abandon(conflict.id)).rejects.toThrow(
+      '已有进行中的解决任务，请先处理该任务'
+    )
+    await expect(coordinator.markManuallyResolved(conflict.id)).rejects.toThrow(
+      '已有进行中的解决任务，请先处理该任务'
+    )
+    expect(() => coordinator.createResolveTask(conflict.id, 'agent-claude')).toThrow(
+      '已有进行中的解决任务，请先处理该任务'
+    )
+
+    expect(tasks.get(conflict.id)?.status).toBe('conflict')
+    expect(tasks.get(resolve.id)?.status).toBe('queued')
+    expect(existsSync(conflict.worktreePath as string)).toBe(true)
+  })
+
+  test('a finished resolve child no longer blocks the parent conflict actions', async () => {
+    insertAgent()
+    const conflict = await createConflictTask()
+    const resolve = coordinator.createResolveTask(conflict.id, 'agent-claude')
+    // 解决任务失败后现场仍归父任务处理，允许重新指派或改为手动解决
+    tasks.update(resolve.id, { status: 'failed', summary: '解决失败' })
+
+    expect(() => coordinator.createResolveTask(conflict.id, 'agent-claude')).not.toThrow()
+  })
+
+  test('createResolveTask validates that the agent exists in the workspace and is enabled', async () => {
+    insertAgent()
+    const conflict = await createConflictTask()
+
+    expect(() => coordinator.createResolveTask(conflict.id, 'agent-missing')).toThrow(
+      '解决 Agent 不存在或不属于该工作区：agent-missing'
+    )
+
+    insertAgent({ id: 'agent-disabled', name: 'disabled', enabled: false })
+    expect(() => coordinator.createResolveTask(conflict.id, 'agent-disabled')).toThrow(
+      '解决 Agent 已停用：disabled'
+    )
+
+    // 其他工作区的 Agent 同样不能接管本工作区的冲突现场
+    insertAgent({ id: 'agent-other', name: 'other', workspaceId: 'other-workspace' })
+    expect(() => coordinator.createResolveTask(conflict.id, 'agent-other')).toThrow(
+      '解决 Agent 不存在或不属于该工作区：agent-other'
+    )
+
+    expect(
+      tasks.listByWorkspace(workspace.id).filter((task) => task.taskType === 'resolve')
+    ).toEqual([])
   })
 
   test('prepareResolveWorktree recreates the worktree on the conflicting agent branch', async () => {
@@ -471,8 +589,7 @@ describe('MergeCoordinator', () => {
     await expect(coordinator.mergeTask(task.id)).rejects.toThrow('只有已完成的任务可以合并')
   })
 
-  test('merge failure before git merge marks the task failed instead of leaving it done', async () => {
-    // Agent 记录被删除（或任务引用了不存在的 Agent）时，范围闸门读取 Agent 会失败
+  test('merge failure before git merge marks the task failed instead of leaving it done', async () => {    // Agent 记录被删除（或任务引用了不存在的 Agent）时，范围闸门读取 Agent 会失败
     const task = await createDoneTask({
       files: { 'FEATURE.md': 'feature\n' },
       agentId: 'agent-deleted'
