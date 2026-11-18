@@ -197,6 +197,23 @@ describe('GenericCliAdapter', () => {
     expect(runner.spawns[0]?.args).toEqual(['--flag', 'hello world with spaces'])
   })
 
+  test('prompt replacement patterns reach the child argv unchanged', async () => {
+    const adapter = new GenericCliAdapter(new ChildProcessRunner(), {
+      command: node,
+      argsTemplate: `${fixturePath} --echo-args {prompt}`
+    })
+    // 这些序列在 String.prototype.replace 的字符串替换串里有特殊含义，必须按字面量传给子进程。
+    const prompt = "sed $& $$ $` $' end"
+
+    const events = await collect(
+      adapter.start({ prompt, cwd, signal: new AbortController().signal })
+    )
+    const first = events[0]
+
+    expect(first?.type).toBe('log')
+    expect(JSON.parse((first as { type: 'log'; text: string }).text)).toEqual(['--echo-args', prompt])
+  })
+
   test('the final summary keeps only the last 20 lines', async () => {
     const lines = Array.from({ length: 25 }, (_, index) => `line ${index + 1}`)
     const adapter = new GenericCliAdapter(new ScriptedRunner([`${lines.join('\n')}\n`]), {

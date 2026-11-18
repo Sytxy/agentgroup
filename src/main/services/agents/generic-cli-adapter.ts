@@ -32,7 +32,9 @@ export class GenericCliAdapter implements AgentAdapter {
         return token
       }
       replaced = true
-      return token.replaceAll('{prompt}', prompt)
+      // 必须用函数替换：字符串替换串里的 `$&`、`$$`、`$``、`$'` 是特殊模式，
+      // 会把任意 prompt 静默篡改，破坏“原样传参”的契约。
+      return token.replaceAll('{prompt}', () => prompt)
     })
 
     // 模板没有声明提示位置时，按约定追加到参数末尾。
