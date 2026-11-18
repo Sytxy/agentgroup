@@ -811,7 +811,7 @@ Run: `git add src tests && git commit -m "feat: typed ipc bridge between main an
 
 **Interfaces:**
 - Consumes: `window.api`（Task 16）
-- Produces: 应用外壳（左侧工作区列表、中间占位、右侧占位）；`WorkspaceSetup` 表单（名称、仓库路径、目标分支）；创建成功后刷新列表。
+- Produces: 应用外壳（左侧工作区列表、中间占位、右侧占位）；顶部显示工作区名、仓库路径、integration 分支名与相对目标分支的 diff 统计；`WorkspaceSetup` 表单（名称、仓库路径、目标分支）；创建成功后刷新列表。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -891,7 +891,7 @@ Run: `git add src tests && git commit -m "feat: chat timeline and composer with 
 
 **Interfaces:**
 - Consumes: `window.api`、`Task`、`AgentConfig`
-- Produces: 任务卡片（状态、耗时、最近进度、展开日志、取消/重试/合并确认/放弃/打开 worktree）；成员面板（状态点、添加/停用）；设置对话框（autoMerge、autoTestAfterMerge、testAgent、setup 命令/复制、目标分支）；`notifyTaskFinished(task)` 在 merged/failed/conflict 时弹 macOS 通知。
+- Produces: 任务卡片（状态、耗时、最近进度、展开日志、取消/重试/合并确认/放弃/打开 worktree）；成员面板（状态点、添加/停用）；顶部显示 `lastVerification` 与"复制合入命令"按钮（`git merge agentgroup/integration`）；设置对话框（autoMerge、autoTestAfterMerge、testAgent、setup 命令/复制、目标分支）；`notifyTaskFinished(task)` 在 merged/failed/conflict 时弹 macOS 通知。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -899,6 +899,7 @@ Run: `git add src tests && git commit -m "feat: chat timeline and composer with 
 test('task card shows status-specific actions for conflict and awaiting_approval', ...)
 test('add agent dialog warns for edit-and-run profile', ...)
 test('notification helper fires for failed and merged only', ...)
+test('header shows lastVerification and copies the integration merge command', ...)
 ```
 
 - [ ] **Step 2: 运行确认失败**
