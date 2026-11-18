@@ -1,0 +1,8 @@
+{"type":"thread.started","thread_id":"thread-1"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"pnpm test","aggregated_output":"ok","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_2","type":"mcp_tool_call","server":"files","tool":"read_file","status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"  All done  "}}
+{"type":"unknown_event","payload":{"value":1}}
+{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":2}}
+plain text line
