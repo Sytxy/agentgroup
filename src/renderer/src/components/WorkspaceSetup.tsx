@@ -50,6 +50,48 @@ export default function WorkspaceSetup({
 
   return (
     <div className="setup-screen">
+      <aside className="setup-aside">
+        <p className="setup-aside-brand">AgentGroup</p>
+        <div className="setup-aside-copy">
+          <p className="setup-aside-title">
+            把多个 Agent，
+            <br />
+            放进同一个群。
+          </p>
+          <p className="setup-aside-lead">
+            Claude Code、Codex 和你的自定义 CLI，在同一个仓库里并行工作。
+            <br />
+            进度、冲突和合并结果回到同一个对话。
+          </p>
+          <ul className="setup-points">
+            <li>一条消息拆成多个任务</li>
+            <li>每个任务独立 worktree</li>
+            <li>结果合入 agentgroup/integration</li>
+          </ul>
+          <div className="setup-agents" aria-hidden="true">
+            <span className="setup-agent">
+              <span className="setup-agent-avatar" data-preset="claude">
+                C
+              </span>
+              Claude
+            </span>
+            <span className="setup-agent">
+              <span className="setup-agent-avatar" data-preset="codex">
+                C
+              </span>
+              Codex
+            </span>
+            <span className="setup-agent">
+              <span className="setup-agent-avatar" data-preset="custom">
+                D
+              </span>
+              DeepSeek
+            </span>
+          </div>
+        </div>
+        <p className="setup-aside-foot">本地运行 · 数据留在本机</p>
+      </aside>
+
       <form className="setup-card" onSubmit={handleSubmit}>
         <h1 className="setup-title">新建工作区</h1>
         <p className="setup-hint">

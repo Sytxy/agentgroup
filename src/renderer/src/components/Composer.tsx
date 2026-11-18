@@ -176,7 +176,7 @@ export default function Composer({
         className="composer-input"
         aria-label="消息输入"
         placeholder="输入消息，@ 成员分派任务（Enter 发送，Shift+Enter 换行）"
-        rows={3}
+        rows={2}
         value={value}
         disabled={disabled || sending}
         onChange={(event) => {
@@ -190,6 +190,7 @@ export default function Composer({
       />
 
       <div className="composer-actions">
+        <span className="composer-hint">Enter 发送 · Shift+Enter 换行 · @ 提及成员</span>
         {error !== null && (
           <p className="composer-error" role="alert">
             发送失败：{error}

@@ -39,7 +39,10 @@ export default function ChatTimeline({
 
   return (
     <div className="chat-timeline" data-testid="chat-timeline">
-      <h2 className="panel-title">群聊</h2>
+      <div className="panel-heading">
+        <h2 className="panel-title">群聊</h2>
+        <span className="panel-count">{messages.length} 条消息</span>
+      </div>
       <div
         className="timeline-list"
         ref={listRef}
@@ -89,6 +92,8 @@ export default function ChatTimeline({
 
             if (message.kind === 'agent') {
               // Agent 可能已被删除：优先显示名称，其次保留历史 id 便于追溯
+              const authorAgent =
+                message.authorId === null ? undefined : agentsById.get(message.authorId)
               const authorName =
                 message.authorId === null
                   ? '已删除的成员'
@@ -99,7 +104,16 @@ export default function ChatTimeline({
                   className="message message-agent"
                   data-testid="message-agent"
                 >
-                  <span className="message-author">{authorName}</span>
+                  <div className="message-head">
+                    <span
+                      className="message-avatar"
+                      data-preset={authorAgent?.preset ?? 'custom'}
+                      aria-hidden="true"
+                    >
+                      {agentInitial(authorAgent?.name ?? message.authorId ?? '?')}
+                    </span>
+                    <span className="message-author">{authorName}</span>
+                  </div>
                   <p className="message-content">{message.content}</p>
                 </article>
               )
@@ -120,4 +134,9 @@ export default function ChatTimeline({
       </div>
     </div>
   )
+}
+
+/** 头像用名称首字符，中文取第一个字，空名用问号。 */
+function agentInitial(name: string): string {
+  return Array.from(name.trim())[0]?.toUpperCase() ?? '?'
 }

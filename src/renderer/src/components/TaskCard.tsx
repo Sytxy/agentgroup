@@ -51,6 +51,14 @@ const CANCELLABLE: ReadonlySet<TaskStatus> = new Set(['queued', 'preparing', 'ru
 /** 可重试的任务：与 TaskManager.retry 允许的状态一致。 */
 const RETRYABLE: ReadonlySet<TaskStatus> = new Set(['failed', 'cancelled', 'interrupted'])
 
+/** 仍在执行的任务即使暂无输出，也保留进度区，让用户知道它在工作。 */
+const ACTIVE_STATUSES: ReadonlySet<TaskStatus> = new Set([
+  'queued',
+  'preparing',
+  'running',
+  'merging'
+])
+
 export default function TaskCard({
   task,
   agent,
@@ -68,6 +76,8 @@ export default function TaskCard({
 
   const enabledAgents = agents.filter((item) => item.enabled)
   const recentProgress = progress.slice(-5)
+  // 终态任务通常没有进度缓存；空白的“暂无进度”只会把工单撑高，直接收起。
+  const showProgress = recentProgress.length > 0 || ACTIVE_STATUSES.has(task.status)
   // 冲突现场正被解决任务占用：隐藏所有会并发操作同一 worktree 的按钮
   const resolveInProgress = task.status === 'conflict' && activeResolveTask !== undefined
 
@@ -117,10 +127,19 @@ export default function TaskCard({
     <section className="task-card" data-testid="task-card" data-status={task.status}>
       <header className="task-card-header">
         <div className="task-card-heading">
-          <span className="task-card-agent" data-testid="task-card-agent">
-            {agent?.name ?? '已删除的成员'}
+          <span
+            className="task-card-avatar"
+            data-preset={agent?.preset ?? 'custom'}
+            aria-hidden="true"
+          >
+            {agentInitial(agent?.name ?? '?')}
           </span>
-          <span className="task-card-title">{task.title}</span>
+          <div className="task-card-heading-text">
+            <span className="task-card-agent" data-testid="task-card-agent">
+              {agent?.name ?? '已删除的成员'}
+            </span>
+            <span className="task-card-title">{task.title}</span>
+          </div>
         </div>
         <span className="task-card-status" data-testid="task-card-status">
           {STATUS_LABELS[task.status]}
@@ -142,18 +161,20 @@ export default function TaskCard({
         </p>
       )}
 
-      <div className="task-card-progress">
-        <span className="task-card-section-label">最近进度</span>
-        {recentProgress.length === 0 ? (
-          <p className="task-card-empty">暂无进度</p>
-        ) : (
-          <ul className="task-card-progress-lines" data-testid="task-progress">
-            {recentProgress.map((line, index) => (
-              <li key={`${index}-${line}`}>{line}</li>
-            ))}
-          </ul>
-        )}
-      </div>
+      {showProgress && (
+        <div className="task-card-progress">
+          <span className="task-card-section-label">最近进度</span>
+          {recentProgress.length === 0 ? (
+            <p className="task-card-empty">等待输出…</p>
+          ) : (
+            <ul className="task-card-progress-lines" data-testid="task-progress">
+              {recentProgress.map((line, index) => (
+                <li key={`${index}-${line}`}>{line}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {actionError !== null && (
         <p className="task-card-error" role="alert">
@@ -293,6 +314,10 @@ function formatElapsed(task: Task): string {
   if (task.startedAt === null) {
     return '—'
   }
+  // 中断/取消等终态可能没有结束时间；继续按当前时刻计算会显示一个不断增长的值。
+  if (task.finishedAt === null && !ACTIVE_STATUSES.has(task.status)) {
+    return '—'
+  }
   const started = Date.parse(task.startedAt)
   const ended = task.finishedAt === null ? Date.now() : Date.parse(task.finishedAt)
   if (!Number.isFinite(started) || !Number.isFinite(ended) || ended <= started) {
@@ -312,4 +337,9 @@ function formatElapsed(task: Task): string {
 }
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** 头像用名称首字符，中文取第一个字，空名用问号。 */
+function agentInitial(name: string): string {
+  return Array.from(name.trim())[0]?.toUpperCase() ?? '?'
 }

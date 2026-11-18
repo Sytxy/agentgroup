@@ -423,7 +423,7 @@ export default function App(): React.JSX.Element {
             )}
             <button
               type="button"
-              className="header-button"
+              className="header-button header-button-primary"
               onClick={() => void handleCopyMergeCommand()}
             >
               复制合入命令

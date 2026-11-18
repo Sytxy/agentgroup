@@ -31,6 +31,10 @@ export default function AgentPanel({
       .filter((task) => task.status === 'preparing' || task.status === 'running')
       .map((task) => task.agentId)
   )
+  const enabledCount = agents.filter((agent) => agent.enabled).length
+  const busyCount = busyAgentIds.size
+  const idleCount = Math.max(enabledCount - busyCount, 0)
+  const disabledCount = agents.length - enabledCount
 
   const handleRemove = async (agent: AgentConfig): Promise<void> => {
     // 删除不可撤销：先让用户确认；历史任务记录仍会保留
@@ -79,6 +83,18 @@ export default function AgentPanel({
         </button>
       </div>
 
+      <div className="agent-summary" aria-label="成员状态概览">
+        <span>
+          <strong>{busyCount}</strong> 运行中
+        </span>
+        <span>
+          <strong>{idleCount}</strong> 空闲
+        </span>
+        <span>
+          <strong>{disabledCount}</strong> 已停用
+        </span>
+      </div>
+
       {agents.length === 0 ? (
         <p className="panel-empty">还没有成员，先添加一个 Agent 再开始协作。</p>
       ) : (
@@ -88,17 +104,26 @@ export default function AgentPanel({
             const stateLabel = !agent.enabled ? '已停用' : busy ? '运行中' : '空闲'
             return (
               <li key={agent.id} className="agent-item" data-testid={`agent-${agent.id}`}>
-                <span
-                  className={
-                    agent.enabled
-                      ? busy
-                        ? 'agent-dot agent-dot-busy'
-                        : 'agent-dot agent-dot-idle'
-                      : 'agent-dot agent-dot-disabled'
-                  }
-                  aria-label={stateLabel}
-                  title={stateLabel}
-                />
+                <span className="agent-avatar-wrap">
+                  <span
+                    className="agent-avatar"
+                    data-preset={agent.preset}
+                    aria-hidden="true"
+                  >
+                    {agentInitial(agent.name)}
+                  </span>
+                  <span
+                    className={
+                      agent.enabled
+                        ? busy
+                          ? 'agent-dot agent-dot-busy'
+                          : 'agent-dot agent-dot-idle'
+                        : 'agent-dot agent-dot-disabled'
+                    }
+                    aria-label={stateLabel}
+                    title={stateLabel}
+                  />
+                </span>
                 <span className="agent-name">{agent.name}</span>
                 <span className="agent-state">{stateLabel}</span>
                 <button
@@ -149,4 +174,9 @@ export default function AgentPanel({
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** 头像用名称首字符，中文取第一个字，空名用问号。 */
+function agentInitial(name: string): string {
+  return Array.from(name.trim())[0]?.toUpperCase() ?? '?'
 }
