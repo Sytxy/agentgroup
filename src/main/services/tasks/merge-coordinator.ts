@@ -375,17 +375,15 @@ export class MergeCoordinator {
   }
 
   /**
-   * 代码任务合入 integration 后放行它的委派子任务。
+   * 任务合入 integration 后放行它的委派子任务。
    *
    * 委派任务在父任务成功结束时创建，但此时父任务的改动还没有进入 integration；
    * 如果立刻启动，子 Agent 会基于缺少父任务改动的代码工作。因此委派任务创建时
    * 延迟入队，只有父任务真正 merged（包括无改动直接 merged）后才放行。
+   * 父任务类型不限：测试/解决任务同样可能产生委派子任务。
    * 放行失败只记录日志，不能把已经合入的任务回退为失败。
    */
   private releaseDelegatedChildren(task: Task): void {
-    if (task.taskType !== 'code') {
-      return
-    }
     try {
       this.factory.enqueueDeferredChildren(task.id)
     } catch (error) {

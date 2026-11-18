@@ -111,6 +111,7 @@ async function createDoneTask(
     title?: string
     files?: Record<string, string>
     agentId?: string
+    taskType?: Task['taskType']
   } = {}
 ): Promise<Task> {
   const id = randomUUID()
@@ -133,7 +134,7 @@ async function createDoneTask(
     workspaceId: workspace.id,
     agentId: options.agentId ?? 'agent-claude',
     parentTaskId: null,
-    taskType: 'code',
+    taskType: options.taskType ?? 'code',
     title: options.title ?? 'Task',
     prompt: '做点事',
     branch,
@@ -270,6 +271,36 @@ describe('MergeCoordinator', () => {
     await coordinator.mergeTask(parent.id)
 
     expect(tasks.get(parent.id)).toMatchObject({ status: 'merged', summary: '无代码改动' })
+    expect(enqueued).toEqual([child.id])
+  })
+
+  test('delegated child of a test task is released after merge', async () => {
+    insertAgent()
+    const parent = await createDoneTask({
+      title: '验证：登录',
+      files: { 'TESTS.md': 'tests\n' },
+      taskType: 'test'
+    })
+    const child = insertQueuedChild(parent)
+
+    await coordinator.mergeTask(parent.id)
+
+    expect(tasks.get(parent.id)?.status).toBe('merged')
+    expect(enqueued).toEqual([child.id])
+  })
+
+  test('delegated child of a resolve task is released after merge', async () => {
+    insertAgent()
+    const parent = await createDoneTask({
+      title: '解决冲突',
+      files: { 'RESOLVED.md': 'resolved\n' },
+      taskType: 'resolve'
+    })
+    const child = insertQueuedChild(parent)
+
+    await coordinator.mergeTask(parent.id)
+
+    expect(tasks.get(parent.id)?.status).toBe('merged')
     expect(enqueued).toEqual([child.id])
   })
 
