@@ -1,10 +1,11 @@
 // 任务卡片与顶部状态测试：按状态渲染操作、调用对应 IPC、展开日志，
 // 以及顶部验证状态与"复制合入命令"按钮。
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, act } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type {
   AgentConfig,
+  AppEvent,
   ChatMessage,
   Task,
   TaskStatus,
@@ -286,5 +287,49 @@ describe('顶部验证状态', () => {
     expect(
       await screen.findByText('复制失败，请手动执行：git merge agentgroup/integration')
     ).toBeInTheDocument()
+  })
+
+  test('header follows test task verification events', async () => {
+    let listener: ((event: AppEvent) => void) | null = null
+    const invoke = vi.fn(async (channel: string) => {
+      switch (channel) {
+        case 'workspace:list':
+          return [{ ...workspace, lastVerification: 'unknown' as const }]
+        case 'chat:history':
+        case 'tasks:list':
+          return []
+        case 'agents:list':
+          return []
+        case 'workspace:diff':
+          return { files: 0, insertions: 0, deletions: 0 }
+        default:
+          throw new Error(`未预期的 IPC 通道：${channel}`)
+      }
+    })
+    window.api = {
+      invoke,
+      onEvent: vi.fn((callback: (event: AppEvent) => void) => {
+        listener = callback
+        return () => {}
+      })
+    }
+
+    render(<App />)
+    await screen.findByRole('heading', { level: 1, name: 'demo' })
+    expect(screen.getByTestId('verification-status')).toHaveTextContent('未验证')
+
+    const emit = (event: AppEvent): void => {
+      act(() => listener?.(event))
+    }
+    const testTask = makeTask('done', { id: 'test-1', taskType: 'test' })
+    emit({ type: 'task-updated', task: testTask })
+    expect(screen.getByTestId('verification-status')).toHaveTextContent('测试通过')
+
+    // 等待确认未产生新的验证结论，不应把状态改成失败
+    emit({ type: 'task-updated', task: { ...testTask, status: 'awaiting_approval' } })
+    expect(screen.getByTestId('verification-status')).toHaveTextContent('测试通过')
+
+    emit({ type: 'task-updated', task: { ...testTask, status: 'conflict' } })
+    expect(screen.getByTestId('verification-status')).toHaveTextContent('测试失败')
   })
 })

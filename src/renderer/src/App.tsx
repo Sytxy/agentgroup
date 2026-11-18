@@ -180,6 +180,20 @@ export default function App(): React.JSX.Element {
       }
       if (event.type === 'task-updated') {
         const task = event.task
+        // 测试任务结束即代表一次验证。主进程只更新数据库，不推送工作区事件，
+        // 这里按同一规则（done/merged 为通过，其余终态为失败）同步顶部状态。
+        // 在过滤工作区之前处理：其他工作区的验证结果也要更新，切换过去时才是新值。
+        if (task.taskType === 'test' && VERIFICATION_SETTLED_STATUSES.has(task.status)) {
+          const verification: VerificationStatus =
+            task.status === 'done' || task.status === 'merged' ? 'passed' : 'failed'
+          setWorkspaces((current) =>
+            current.map((workspace) =>
+              workspace.id === task.workspaceId
+                ? { ...workspace, lastVerification: verification }
+                : workspace
+            )
+          )
+        }
         if (task.workspaceId !== selectedId) {
           return
         }
@@ -198,22 +212,6 @@ export default function App(): React.JSX.Element {
             delete next[task.id]
             return next
           })
-        }
-        // 测试任务结束即代表一次验证。主进程只更新数据库，不推送工作区事件，
-        // 这里按同一规则（done/merged 为通过，其余终态为失败）同步顶部状态。
-        if (
-          task.taskType === 'test' &&
-          VERIFICATION_SETTLED_STATUSES.has(task.status)
-        ) {
-          const verification: VerificationStatus =
-            task.status === 'done' || task.status === 'merged' ? 'passed' : 'failed'
-          setWorkspaces((current) =>
-            current.map((workspace) =>
-              workspace.id === task.workspaceId
-                ? { ...workspace, lastVerification: verification }
-                : workspace
-            )
-          )
         }
         return
       }
