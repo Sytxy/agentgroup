@@ -16,8 +16,19 @@ export interface FakeAdapterStep {
   delayMs?: number
 }
 
+export type FakeAdapterRunCallback = (
+  cwd: string,
+  signal: AbortSignal
+) => string | null | void | Promise<string | null | void>
+
 export interface FakeAdapterScript {
   steps?: FakeAdapterStep[]
+  /**
+   * 单步脚本：直接拿到任务 worktree 与取消信号，按需写文件或执行 git 命令。
+   * 适配器先产出一条 log，执行回调后再以回调返回值（非字符串时用“完成”）作为摘要产出 final。
+   * 配置该字段时忽略 steps。
+   */
+  run?: FakeAdapterRunCallback
   /** 全部步骤结束后抛出的错误，模拟进程非零退出或启动失败 */
   error?: Error
 }
@@ -44,15 +55,25 @@ export class FakeAdapter implements AgentAdapter {
     this.maxActive = Math.max(this.maxActive, this.active)
 
     try {
-      for (const step of this.script.steps ?? []) {
-        if (step.delayMs !== undefined) {
-          await delay(step.delayMs, input.signal)
-        }
+      if (this.script.run !== undefined) {
+        // 先产出开始日志，再执行 Agent 脚本；脚本内可自由写文件或调用 git。
+        yield { type: 'log', text: 'fake agent started' }
+        const result = await this.script.run(input.cwd, input.signal)
         if (input.signal.aborted) {
           throw new Error('aborted')
         }
-        await step.before?.(input.cwd)
-        yield step.event
+        yield { type: 'final', summary: typeof result === 'string' ? result : '完成' }
+      } else {
+        for (const step of this.script.steps ?? []) {
+          if (step.delayMs !== undefined) {
+            await delay(step.delayMs, input.signal)
+          }
+          if (input.signal.aborted) {
+            throw new Error('aborted')
+          }
+          await step.before?.(input.cwd)
+          yield step.event
+        }
       }
       if (this.script.error) {
         throw this.script.error
