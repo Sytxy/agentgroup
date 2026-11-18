@@ -20,7 +20,9 @@
     "src/main/**/*",
     "src/preload/**/*",
     "src/shared/**/*",
-    "tests/db/**/*",
-    "tests/helpers/**/*"
+    "tests/**/*"
+  ],
+  "exclude": [
+    "tests/renderer/**/*"
   ]
 }
