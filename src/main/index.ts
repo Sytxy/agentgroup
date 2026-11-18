@@ -179,6 +179,33 @@ app.on('window-all-closed', () => {
   }
 })
 
+/**
+ * 退出前先取消所有运行中的 Agent 任务。
+ *
+ * 子进程以独立进程组启动，直接退出会让仍在改文件的 Agent 变成孤儿进程。
+ * 首次 before-quit 拦住退出，等待 cancelAll() 收尾后再调用 app.quit()；
+ * quitting 标记防止第二次 before-quit 再次拦截导致无法退出。
+ * 数据库由随后的 will-quit 关闭，保证取消过程中的状态写入仍然持久化。
+ */
+let quitting = false
+
+app.on('before-quit', (event) => {
+  const appContext = context
+  if (quitting || appContext === null) {
+    return
+  }
+  event.preventDefault()
+  quitting = true
+  void appContext.taskManager
+    .cancelAll()
+    .catch((error: unknown) => {
+      console.error('取消运行中的任务失败', error)
+    })
+    .finally(() => {
+      app.quit()
+    })
+})
+
 // 退出前关闭数据库，避免 sql.js 内存中的状态无谓地留在进程里。
 app.on('will-quit', () => {
   context?.db.close()
