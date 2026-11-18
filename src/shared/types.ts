@@ -28,6 +28,8 @@ export interface Workspace {
   taskTimeoutMin: number
   autoMerge: boolean
   autoTestAfterMerge: boolean
+  /** 消息没有 @ 任何成员时，默认接收任务的 Agent；null 表示不默认分派。 */
+  defaultAgentId: string | null
   testAgentId: string | null
   testTaskTemplate: string
   lastVerification: VerificationStatus

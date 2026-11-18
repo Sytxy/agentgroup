@@ -1610,6 +1610,13 @@ select:focus-visible {
   line-height: 1.6;
 }
 
+.dialog-hint {
+  margin: -4px 0 0;
+  color: var(--faint);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
 .dialog-warning strong {
   color: var(--signal);
 }

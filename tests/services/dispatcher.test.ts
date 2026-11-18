@@ -50,7 +50,7 @@ function makeAgent(
   }
 }
 
-function createDispatcher(): Dispatcher {
+function createDispatcher(defaultAgentId: string | null = null): Dispatcher {
   const newId = (): string => `id-${++idCounter}`
   const now = (): Date => NOW
   const factory = new TaskFactory({ tasks, messages, events, enqueue, newId, now })
@@ -59,6 +59,7 @@ function createDispatcher(): Dispatcher {
     messages,
     events,
     factory,
+    defaultAgentIdFor: () => defaultAgentId,
     enqueue,
     newId,
     now
@@ -176,6 +177,58 @@ describe('Dispatcher', () => {
     expect(stored).toHaveLength(1)
     expect(stored[0]).toEqual(result.message)
     expect(stored[0]?.kind).toBe('user')
+  })
+
+  test('routes a message without mentions to the configured default agent', async () => {
+    const dispatcher = createDispatcher('agent-claude')
+
+    const result = await dispatcher.send(WORKSPACE_ID, '把登录页面做完')
+
+    expect(result.tasks).toHaveLength(1)
+    expect(result.tasks[0]).toMatchObject({
+      agentId: 'agent-claude',
+      status: 'queued',
+      prompt: '把登录页面做完',
+      title: '把登录页面做完'
+    })
+    expect(enqueue).toHaveBeenCalledWith(result.tasks[0]?.id)
+    const stored = messages.listByWorkspace(WORKSPACE_ID)
+    expect(stored.map((message) => message.kind)).toEqual(['user', 'task-card', 'system'])
+    expect(stored[1]?.taskId).toBe(result.tasks[0]?.id)
+    expect(stored[2]?.content).toBe('未 @ 成员，已交给默认 Agent：claude')
+  })
+
+  test('does not use the default when a known mention has no task text', async () => {
+    const dispatcher = createDispatcher('agent-claude')
+
+    const result = await dispatcher.send(WORKSPACE_ID, '@claude')
+
+    expect(result.tasks).toEqual([])
+    expect(enqueue).not.toHaveBeenCalled()
+    expect(messages.listByWorkspace(WORKSPACE_ID)).toHaveLength(1)
+  })
+
+  test('unknown mentions do not fall back to the default agent', async () => {
+    const dispatcher = createDispatcher('agent-claude')
+
+    const result = await dispatcher.send(WORKSPACE_ID, '@ghost 做点事')
+
+    expect(result.tasks).toEqual([])
+    expect(enqueue).not.toHaveBeenCalled()
+    const stored = messages.listByWorkspace(WORKSPACE_ID)
+    expect(stored[1]?.content).toBe('未找到 Agent：@ghost')
+  })
+
+  test('reports a disabled default agent instead of dispatching', async () => {
+    agents.update('agent-claude', { enabled: false })
+    const dispatcher = createDispatcher('agent-claude')
+
+    const result = await dispatcher.send(WORKSPACE_ID, '做点事')
+
+    expect(result.tasks).toEqual([])
+    expect(enqueue).not.toHaveBeenCalled()
+    const stored = messages.listByWorkspace(WORKSPACE_ID)
+    expect(stored[1]?.content).toBe('默认 Agent 已停用或不存在，消息未分派')
   })
 
   test('all-unknown mentions create a system warning and no tasks', async () => {

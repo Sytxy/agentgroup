@@ -87,6 +87,16 @@ export function createIpcHandlers(ctx: AppContext): Record<string, IpcHandler> {
         throw new Error(`目标分支不存在：${patch.targetBranch}`)
       }
     }
+    // 默认 Agent 必须属于当前工作区且处于启用状态，否则消息会被静默留在群里。
+    if (patch.defaultAgentId !== undefined && patch.defaultAgentId !== null) {
+      const agent = ctx.agents.get(patch.defaultAgentId)
+      if (agent === null || agent.workspaceId !== workspaceId) {
+        throw new Error('默认 Agent 不存在或不属于该工作区')
+      }
+      if (!agent.enabled) {
+        throw new Error('默认 Agent 已停用，请先启用')
+      }
+    }
     ctx.workspaces.update(workspaceId, patch)
     return ctx.workspaces.get(workspaceId)
   })
@@ -314,6 +324,9 @@ function workspaceSettingsPatch(payload: unknown): WorkspacePatch {
   }
   if (input['autoTestAfterMerge'] !== undefined) {
     patch.autoTestAfterMerge = booleanValue(input, 'autoTestAfterMerge')
+  }
+  if (input['defaultAgentId'] !== undefined) {
+    patch.defaultAgentId = nullableString(input, 'defaultAgentId')
   }
   if (input['testAgentId'] !== undefined) {
     patch.testAgentId = nullableString(input, 'testAgentId')

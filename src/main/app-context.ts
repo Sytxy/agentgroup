@@ -120,6 +120,7 @@ export async function createAppContext(deps: AppContextDeps): Promise<AppContext
     messages,
     events,
     factory: taskFactory,
+    defaultAgentIdFor: (workspaceId) => workspaces.get(workspaceId)?.defaultAgentId ?? null,
     enqueue: (taskId) => taskManager.enqueue(taskId)
   })
 

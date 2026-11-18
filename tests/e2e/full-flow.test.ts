@@ -202,4 +202,30 @@ describe('full flow', () => {
     },
     E2E_TIMEOUT_MS
   )
+
+  test(
+    'a message without mentions goes to the workspace default agent',
+    async () => {
+      ctx = await createTestContext({
+        agents: [
+          {
+            name: 'claude',
+            run: (cwd) => writeFileIn(cwd, 'DEFAULT.md', 'default content\n')
+          }
+        ]
+      })
+      const claude = ctx.agent('claude')
+      ctx.workspaces.update(ctx.workspace.id, { defaultAgentId: claude.id })
+
+      const dispatched = await ctx.dispatcher.send(ctx.workspace.id, '把默认任务做完')
+
+      expect(dispatched.tasks).toHaveLength(1)
+      expect(dispatched.tasks[0]?.agentId).toBe(claude.id)
+      await waitForTaskStatus(ctx.tasks, dispatched.tasks[0]!.id, 'merged')
+      expect(await readFile(join(ctx.integrationPath, 'DEFAULT.md'), 'utf8')).toBe(
+        'default content\n'
+      )
+    },
+    E2E_TIMEOUT_MS
+  )
 })

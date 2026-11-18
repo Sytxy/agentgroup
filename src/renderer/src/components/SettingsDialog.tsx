@@ -28,7 +28,13 @@ export default function SettingsDialog({
   const [error, setError] = useState<string | null>(null)
 
   const enabledAgents = agents.filter((agent) => agent.enabled)
-  // 测试 Agent 已删除或停用时视为未设置，避免把失效 id 写回
+  // 默认/测试 Agent 已删除或停用时视为未设置，避免把失效 id 写回
+  const initialDefaultAgent =
+    workspace.defaultAgentId !== null &&
+    enabledAgents.some((agent) => agent.id === workspace.defaultAgentId)
+      ? workspace.defaultAgentId
+      : ''
+  const [defaultAgentId, setDefaultAgentId] = useState(initialDefaultAgent)
   const initialTestAgent =
     workspace.testAgentId !== null &&
     enabledAgents.some((agent) => agent.id === workspace.testAgentId)
@@ -59,6 +65,7 @@ export default function SettingsDialog({
       const patch: WorkspaceSettingsPatch = {
         autoMerge,
         autoTestAfterMerge,
+        defaultAgentId: defaultAgentId === '' ? null : defaultAgentId,
         testAgentId: testAgentId === '' ? null : testAgentId,
         setupCommand: setupCommand.trim() === '' ? null : setupCommand.trim(),
         setupCopy: parseList(setupCopy),
@@ -103,6 +110,25 @@ export default function SettingsDialog({
           />
           每次代码任务合并后自动创建测试任务
         </label>
+
+        <label className="dialog-field" htmlFor="settings-default-agent">
+          默认 Agent（未 @ 时）
+          <select
+            id="settings-default-agent"
+            value={defaultAgentId}
+            onChange={(event) => setDefaultAgentId(event.target.value)}
+          >
+            <option value="">不设置</option>
+            {enabledAgents.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p className="dialog-hint">
+          消息里没有 @ 任何人时，整条消息会交给这个成员。
+        </p>
 
         <label className="dialog-field" htmlFor="settings-test-agent">
           测试 Agent

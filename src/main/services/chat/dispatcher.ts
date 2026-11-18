@@ -12,6 +12,8 @@ export interface DispatcherDeps {
   events: EventBus
   /** 统一创建任务 + task-card 消息，保证群聊里每个任务都有卡片 */
   factory: TaskFactory
+  /** 消息没有 @ 任何人时使用的默认 Agent；返回 null 表示不默认分派。 */
+  defaultAgentIdFor?: (workspaceId: string) => string | null
   /** 任务创建后交给 TaskManager 入队；分派器本身不启动任务。 */
   enqueue: (taskId: string) => void
   newId?: () => string
@@ -37,6 +39,7 @@ export class Dispatcher {
   private readonly messages: MessageRepo
   private readonly events: EventBus
   private readonly factory: TaskFactory
+  private readonly defaultAgentIdFor: (workspaceId: string) => string | null
   private readonly enqueue: (taskId: string) => void
   private readonly newId: () => string
   private readonly now: () => Date
@@ -46,6 +49,7 @@ export class Dispatcher {
     this.messages = deps.messages
     this.events = deps.events
     this.factory = deps.factory
+    this.defaultAgentIdFor = deps.defaultAgentIdFor ?? (() => null)
     this.enqueue = deps.enqueue
     this.newId = deps.newId ?? (() => randomUUID())
     this.now = deps.now ?? (() => new Date())
@@ -93,8 +97,54 @@ export class Dispatcher {
           content: `未找到 Agent：${unknownMentions.map((name) => `@${name}`).join('、')}`,
           taskId: null
         })
+        return { message: userMessage, tasks: [] }
       }
-      return { message: userMessage, tasks: [] }
+
+      // 只有整条消息完全没有 @ 时才走默认 Agent。@ 了已知成员但没写任务内容时，
+      // 说明用户意图是提及而不是默认分派，保持原来的“只显示消息”行为。
+      if (hasAnyMention(text)) {
+        return { message: userMessage, tasks: [] }
+      }
+
+      const defaultAgentId = this.defaultAgentIdFor(workspaceId)
+      if (defaultAgentId === null) {
+        return { message: userMessage, tasks: [] }
+      }
+      const defaultAgent = enabledAgents.find((agent) => agent.id === defaultAgentId)
+      if (defaultAgent === undefined) {
+        insertMessage({
+          kind: 'system',
+          authorType: 'system',
+          authorId: null,
+          content: '默认 Agent 已停用或不存在，消息未分派',
+          taskId: null
+        })
+        return { message: userMessage, tasks: [] }
+      }
+
+      const prompt = text.trim()
+      if (prompt === '') {
+        return { message: userMessage, tasks: [] }
+      }
+      const title = Array.from(prompt).slice(0, 40).join('')
+      const task = this.factory.create({
+        workspaceId,
+        agentId: defaultAgent.id,
+        parentTaskId: null,
+        taskType: 'code',
+        title,
+        prompt,
+        deferEnqueue: true
+      })
+      insertMessage({
+        kind: 'system',
+        authorType: 'system',
+        authorId: null,
+        content: `未 @ 成员，已交给默认 Agent：${defaultAgent.name}`,
+        taskId: null
+      })
+      this.enqueue(task.id)
+      return { message: userMessage, tasks: [task] }
     }
 
     const agentsById = new Map(enabledAgents.map((agent) => [agent.id, agent]))
@@ -171,4 +221,9 @@ function findUnknownMentions(text: string, enabledAgents: Array<{ name: string }
   }
 
   return unknown
+}
+
+/** 消息里是否出现了任何 `@token`；用于区分“没 @ 任何人”和“@ 了但没写内容”。 */
+function hasAnyMention(text: string): boolean {
+  return /(?:^|\s)@[\p{L}\p{N}_.+#-]+/u.test(text)
 }

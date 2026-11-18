@@ -31,6 +31,7 @@ const workspace: Workspace = {
   taskTimeoutMin: 60,
   autoMerge: true,
   autoTestAfterMerge: false,
+  defaultAgentId: null,
   testAgentId: null,
   testTaskTemplate: '运行全部测试',
   lastVerification: 'unknown',
@@ -294,6 +295,34 @@ describe('createIpcHandlers', () => {
     })
     expect(git.branchExists).toHaveBeenCalledWith('/repo', 'main')
     expect(workspaces.update).toHaveBeenCalledWith('w1', { targetBranch: 'main' })
+  })
+
+  test('workspace:update validates the default agent', async () => {
+    const { ctx, workspaces, agents } = makeFakeContext()
+    workspaces.get.mockReturnValue(workspace)
+    const handlers = createIpcHandlers(ctx)
+
+    agents.get.mockReturnValue(null)
+    await expect(
+      handlers[IPC.workspaceUpdate]!({ workspaceId: 'w1', patch: { defaultAgentId: 'a1' } })
+    ).rejects.toThrow(`${IPC.workspaceUpdate} 失败：默认 Agent 不存在或不属于该工作区`)
+
+    agents.get.mockReturnValue({ ...agent, workspaceId: 'w2' })
+    await expect(
+      handlers[IPC.workspaceUpdate]!({ workspaceId: 'w1', patch: { defaultAgentId: 'a1' } })
+    ).rejects.toThrow(`${IPC.workspaceUpdate} 失败：默认 Agent 不存在或不属于该工作区`)
+
+    agents.get.mockReturnValue({ ...agent, enabled: false })
+    await expect(
+      handlers[IPC.workspaceUpdate]!({ workspaceId: 'w1', patch: { defaultAgentId: 'a1' } })
+    ).rejects.toThrow(`${IPC.workspaceUpdate} 失败：默认 Agent 已停用，请先启用`)
+
+    agents.get.mockReturnValue(agent)
+    await handlers[IPC.workspaceUpdate]!({
+      workspaceId: 'w1',
+      patch: { defaultAgentId: 'a1' }
+    })
+    expect(workspaces.update).toHaveBeenCalledWith('w1', { defaultAgentId: 'a1' })
   })
 
   test('tasks:create-resolve delegates and leaves task-card creation to the factory', async () => {

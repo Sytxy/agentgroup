@@ -26,6 +26,7 @@ function mapRow(row: Row): Workspace {
     taskTimeoutMin: integer(row, 'task_timeout_min'),
     autoMerge: boolean(row, 'auto_merge'),
     autoTestAfterMerge: boolean(row, 'auto_test_after_merge'),
+    defaultAgentId: nullableText(row, 'default_agent_id'),
     testAgentId: nullableText(row, 'test_agent_id'),
     testTaskTemplate: text(row, 'test_task_template'),
     lastVerification: text(row, 'last_verification') as VerificationStatus,
@@ -41,9 +42,9 @@ export class WorkspaceRepo {
       `INSERT INTO workspaces (
         id, name, repo_path, integration_branch, target_branch, setup_command,
         setup_copy_json, setup_timeout_min, task_timeout_min, auto_merge,
-        auto_test_after_merge, test_agent_id, test_task_template,
+        auto_test_after_merge, default_agent_id, test_agent_id, test_task_template,
         last_verification, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         workspace.id,
         workspace.name,
@@ -56,6 +57,7 @@ export class WorkspaceRepo {
         workspace.taskTimeoutMin,
         workspace.autoMerge ? 1 : 0,
         workspace.autoTestAfterMerge ? 1 : 0,
+        workspace.defaultAgentId,
         workspace.testAgentId,
         workspace.testTaskTemplate,
         workspace.lastVerification,
@@ -97,6 +99,7 @@ export class WorkspaceRepo {
     if (patch.autoTestAfterMerge !== undefined) {
       set('auto_test_after_merge', patch.autoTestAfterMerge ? 1 : 0)
     }
+    if (patch.defaultAgentId !== undefined) set('default_agent_id', patch.defaultAgentId)
     if (patch.testAgentId !== undefined) set('test_agent_id', patch.testAgentId)
     if (patch.testTaskTemplate !== undefined) set('test_task_template', patch.testTaskTemplate)
     if (patch.lastVerification !== undefined) set('last_verification', patch.lastVerification)

@@ -72,6 +72,26 @@ export class Db {
 }
 
 /**
+ * 为已有数据库补充新列。
+ *
+ * 项目没有迁移框架，`CREATE TABLE IF NOT EXISTS` 不会修改已存在的表。
+ * 这里用 PRAGMA 检查列是否存在，缺失时 ALTER；表名/列名/类型均为代码内常量，
+ * 不来自外部输入。迁移只改内存结构，下一次写操作会随 persist() 落盘。
+ */
+function ensureColumn(
+  raw: initSqlJs.Database,
+  table: string,
+  column: string,
+  definition: string
+): void {
+  const result = raw.exec(`PRAGMA table_info(${table})`)
+  const columns = result[0]?.values ?? []
+  if (!columns.some((row) => row[1] === column)) {
+    raw.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+  }
+}
+
+/**
  * 打开（或创建）数据库文件并确保表结构存在。
  * wasmPath 由调用方提供：测试传入 node_modules 中的 wasm，Electron 传入打包路径；
  * 未提供时交给 sql.js 的默认查找逻辑。
@@ -83,6 +103,8 @@ export async function openDatabase(filePath: string, wasmPath?: string): Promise
   const existing = fs.existsSync(filePath) ? fs.readFileSync(filePath) : null
   const raw = new SQL.Database(existing)
   raw.run(SCHEMA_SQL)
+  // 旧版本数据库没有默认 Agent 字段，启动时补齐，避免 SELECT * 读取时缺列。
+  ensureColumn(raw, 'workspaces', 'default_agent_id', 'TEXT')
   return new Db(raw, filePath)
 }
 

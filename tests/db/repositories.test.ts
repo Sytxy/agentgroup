@@ -1,4 +1,7 @@
 import fs from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import initSqlJs from 'sql.js'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import type { AgentConfig, ChatMessage, Task, Workspace } from '../../src/shared/types'
 import { openDatabase } from '../../src/main/db/database'
@@ -21,6 +24,7 @@ function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
     taskTimeoutMin: 30,
     autoMerge: true,
     autoTestAfterMerge: false,
+    defaultAgentId: null,
     testAgentId: 'agent-2',
     testTaskTemplate: 'Run the test suite',
     lastVerification: 'unknown',
@@ -285,6 +289,40 @@ describe('sqlite repositories', () => {
       expect(new WorkspaceRepo(reopened).list().map((row) => row.id)).toEqual(['ws-1', 'ws-2'])
     } finally {
       reopened.close()
+    }
+  })
+
+  test('openDatabase adds default_agent_id to an existing legacy database', async () => {
+    const dir = fs.mkdtempSync(join(tmpdir(), 'agentgroup-migrate-'))
+    const file = join(dir, 'legacy.db')
+    try {
+      // 模拟旧版本数据库：workspaces 表没有 default_agent_id 列
+      const SQL = await initSqlJs({ locateFile: () => WASM_PATH })
+      const legacy = new SQL.Database()
+      legacy.run(`
+        CREATE TABLE workspaces (
+          id TEXT PRIMARY KEY, name TEXT NOT NULL, repo_path TEXT NOT NULL,
+          integration_branch TEXT NOT NULL, target_branch TEXT, setup_command TEXT,
+          setup_copy_json TEXT NOT NULL, setup_timeout_min INTEGER NOT NULL,
+          task_timeout_min INTEGER NOT NULL, auto_merge INTEGER NOT NULL,
+          auto_test_after_merge INTEGER NOT NULL, test_agent_id TEXT,
+          test_task_template TEXT NOT NULL, last_verification TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+      `)
+      fs.writeFileSync(file, Buffer.from(legacy.export()))
+      legacy.close()
+
+      const db = await openDatabase(file, WASM_PATH)
+      try {
+        const repo = new WorkspaceRepo(db)
+        repo.insert(makeWorkspace({ id: 'ws-migrated' }))
+        expect(repo.get('ws-migrated')?.defaultAgentId).toBeNull()
+      } finally {
+        db.close()
+      }
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
     }
   })
 })

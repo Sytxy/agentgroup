@@ -11,6 +11,7 @@ export type DiffStat = { files: number; insertions: number; deletions: number }
 export interface WorkspaceSettingsPatch {
   autoMerge?: boolean
   autoTestAfterMerge?: boolean
+  defaultAgentId?: string | null
   testAgentId?: string | null
   setupCommand?: string | null
   setupCopy?: string[]

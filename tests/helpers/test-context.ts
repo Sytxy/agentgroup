@@ -197,6 +197,7 @@ export async function createTestContext(options: TestContextOptions): Promise<Te
       messages,
       events,
       factory: taskFactory,
+      defaultAgentIdFor: (workspaceId) => workspaces.get(workspaceId)?.defaultAgentId ?? null,
       enqueue: (taskId) => taskManager.enqueue(taskId)
     })
 

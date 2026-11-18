@@ -56,6 +56,7 @@ describe('WorkspaceService', () => {
       taskTimeoutMin: 60,
       autoMerge: true,
       autoTestAfterMerge: false,
+      defaultAgentId: null,
       testAgentId: null,
       testTaskTemplate: '运行全部测试并汇总失败用例',
       lastVerification: 'unknown',

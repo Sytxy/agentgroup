@@ -17,6 +17,7 @@ const workspace: Workspace = {
   taskTimeoutMin: 60,
   autoMerge: true,
   autoTestAfterMerge: false,
+  defaultAgentId: null,
   testAgentId: null,
   testTaskTemplate: '运行全部测试',
   lastVerification: 'unknown',

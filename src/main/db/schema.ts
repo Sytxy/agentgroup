@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
   task_timeout_min INTEGER NOT NULL,
   auto_merge INTEGER NOT NULL,
   auto_test_after_merge INTEGER NOT NULL,
+  default_agent_id TEXT,
   test_agent_id TEXT,
   test_task_template TEXT NOT NULL,
   last_verification TEXT NOT NULL,

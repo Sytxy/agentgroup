@@ -109,6 +109,8 @@ App 数据位于 `~/Library/Application Support/agentgroup/`（数据库、workt
    ```
 
    每个 `@成员` 到下一个 `@成员` 之间的文字，就是这个成员收到的任务提示。输入 `@` 会弹出成员补全；Enter 发送、Shift+Enter 换行。
+
+   如果整条消息没有 @ 任何人，可以在工作区设置的「默认 Agent（未 @ 时）」里指定一个成员；未设置时消息只留在群里，不创建任务。
 2. 消息中的每个成员会并行创建一个任务：
    - 从 integration 的当前提交创建分支 `agent/<taskId>-<slug>`；
    - 在 App 数据目录下创建独立 worktree；
