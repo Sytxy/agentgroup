@@ -39,6 +39,14 @@ export class WorkspaceService {
       throw new Error(`无法在 ${input.repoPath} 打开 git 仓库：${detail}`)
     }
 
+    // v1 每个仓库只允许一个工作区：集成分支名固定，若重复创建，git 会因同一分支
+    // 已在其他 worktree 检出而失败。这里提前拦截，且必须在创建分支/worktree 之前，
+    // 保证失败的第二创建不会留下任何副作用。
+    const duplicate = this.repo.list().find((workspace) => workspace.repoPath === repoPath)
+    if (duplicate) {
+      throw new Error(`该仓库已存在工作区：${duplicate.name}`)
+    }
+
     const id = randomUUID()
     const worktreePath = this.integrationWorktreePath(id)
 

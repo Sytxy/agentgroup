@@ -83,6 +83,22 @@ describe('WorkspaceService', () => {
     }
   })
 
+  test('create rejects a second workspace for the same repository without side effects', async () => {
+    const first = await service.create({ name: 'First', repoPath: tempRepo.path })
+    const { stdout: before } = await gitRun(tempRepo.path, ['worktree', 'list', '--porcelain'])
+
+    await expect(service.create({ name: 'Second', repoPath: tempRepo.path })).rejects.toThrow(
+      /^该仓库已存在工作区：First$/
+    )
+
+    // 失败的第二次创建不能留下额外记录或 git 状态
+    expect(service.list()).toEqual([first])
+    expect(repo.get(first.id)).toEqual(first)
+    const { stdout: after } = await gitRun(tempRepo.path, ['worktree', 'list', '--porcelain'])
+    expect(after).toBe(before)
+    expect(after.split('\n').filter((line) => line.startsWith('worktree '))).toHaveLength(2)
+  })
+
   test('create reuses an existing integration branch', async () => {
     await git.createBranch(tempRepo.path, INTEGRATION_BRANCH, 'HEAD')
     const existingWorktree = join(tempRepo.root, 'existing-integration')
