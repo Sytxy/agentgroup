@@ -645,7 +645,7 @@ Run: `git add src tests && git commit -m "feat: merge coordinator with conflict 
 
 **Interfaces:**
 - Consumes: `TaskRepo`、`EventBus`
-- Produces: `TaskManager.recoverInterrupted(): void`；`TaskManager.retry(taskId): Promise<void>`（`interrupted`/`failed`/`cancelled` 可重试）
+- Produces: `TaskManager.recoverInterrupted(): void`；`TaskManager.retry(taskId): Promise<void>`（`interrupted`/`failed`/`cancelled` 可重试）；恢复时对 `done` 且尚未合并的任务重新调用 `onTaskDone`（若已配置），让重启后补上合并
 
 - [ ] **Step 1: 写失败测试**
 
@@ -654,6 +654,7 @@ test('startup marks preparing/running/merging tasks as interrupted', ...)
 test('interrupted tasks are not dispatched automatically', ...)
 test('retry resets a task to queued with a fresh branch and worktree', ...)
 test('retry on a non-retryable status rejects', ...)
+test('recovery re-drives the merge callback for done tasks', ...)
 ```
 
 - [ ] **Step 2: 运行确认失败**
@@ -769,7 +770,7 @@ Run: `git add src tests && git commit -m "feat: add bounded agent delegation"`
 **Interfaces:**
 - Consumes: 所有服务
 - Produces:
-  - `IPC` 通道常量：`workspace:create|list|update|diff`、`agents:list|add|update|remove`、`chat:send|history`、`tasks:list|cancel|retry|approve-merge|abandon|open-worktree|prepare-resolve|mark-resolved|log`、`events`（主→渲染）
+  - `IPC` 通道常量：`workspace:create|list|update|diff`、`agents:list|add|update|remove`、`chat:send|history`、`tasks:list|cancel|retry|approve-merge|abandon|open-worktree|prepare-resolve|mark-resolved|create-resolve|log`、`events`（主→渲染）
   - `createIpcHandlers(ctx: AppContext): Record<string, (payload: unknown) => Promise<unknown>>`；`AppContext` 包含 `openPath: (p: string) => Promise<void>`（生产环境接 Electron `shell.openPath`，测试注入假实现）
   - preload 暴露 `window.api`：`invoke(channel, payload)` 与 `onEvent(cb)`
 
