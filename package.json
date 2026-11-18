@@ -1,0 +1,40 @@
+{
+  "name": "agentgroup",
+  "version": "0.1.0",
+  "description": "AgentGroup - a group chat for AI coding agents",
+  "main": "./out/main/index.js",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "test": "vitest run",
+    "typecheck": "tsc -b --noEmit",
+    "build:mac": "electron-vite build && electron-builder --mac dmg",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "node-pty": "^1.1.0",
+    "picomatch": "^4.0.7",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "sql.js": "^1.16.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^22.20.5",
+    "@types/picomatch": "^4.0.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/sql.js": "^1.4.11",
+    "@vitejs/plugin-react": "^5.2.0",
+    "electron": "^37.10.3",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^4.0.1",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.8",
+    "vitest": "^3.2.7"
+  }
+}

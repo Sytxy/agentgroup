@@ -1,0 +1,12 @@
+appId: com.agentgroup.app
+productName: AgentGroup
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**
+  - package.json
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
