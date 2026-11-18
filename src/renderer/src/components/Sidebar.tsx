@@ -15,7 +15,11 @@ export default function Sidebar({
 }: SidebarProps): React.JSX.Element {
   return (
     <aside className="sidebar">
-      <div className="sidebar-brand">{APP_NAME}</div>
+      <div className="sidebar-brand">
+        <span className="sidebar-brand-mark" aria-hidden="true" />
+        <span className="sidebar-brand-name">{APP_NAME}</span>
+      </div>
+      <p className="sidebar-tagline">多 Agent 协作台</p>
       <nav className="workspace-list" aria-label="工作区列表">
         {workspaces.map((workspace) => (
           <button
@@ -34,6 +38,10 @@ export default function Sidebar({
           </button>
         ))}
       </nav>
+      <footer className="sidebar-footer">
+        <span className="sidebar-local-dot" aria-hidden="true" />
+        本地运行 · 数据留在本机
+      </footer>
     </aside>
   )
 }
