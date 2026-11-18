@@ -52,6 +52,12 @@ export class GitService {
     return stdout.trim()
   }
 
+  /** 当前检出的分支名；工作区服务用它作为未指定目标分支时的默认比较基线 */
+  async currentBranch(repo: string): Promise<string> {
+    const { stdout } = await this.git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])
+    return stdout.trim()
+  }
+
   /**
    * rev-parse --verify --quiet 在 ref 不存在时以退出码 1 结束，
    * 这是“分支不存在”的正常结果；其他退出码表示 git 执行异常，需要向上抛出。

@@ -27,6 +27,16 @@ describe('GitService', () => {
     expect(await git.assertRepo(subdir)).toBe(expectedRoot)
   })
 
+  test('currentBranch returns the checked out branch', async () => {
+    const { stdout: initialOut } = await gitRun(repo.path, ['rev-parse', '--abbrev-ref', 'HEAD'])
+    expect(await git.currentBranch(repo.path)).toBe(initialOut.trim())
+
+    await git.createBranch(repo.path, 'current-branch', 'HEAD')
+    await gitRun(repo.path, ['checkout', 'current-branch'])
+
+    expect(await git.currentBranch(repo.path)).toBe('current-branch')
+  })
+
   test('worktreeAdd creates branch and directory', async () => {
     const worktreePath = join(repo.root, 'wt-feature')
     await git.worktreeAdd(repo.path, worktreePath, 'feat-a', 'HEAD')
