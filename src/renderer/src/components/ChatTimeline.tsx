@@ -1,21 +1,26 @@
 // 群聊时间线：按消息类型渲染用户、Agent、系统与任务卡片四类消息。
-// 任务卡片从 tasks 中查找对应任务展示当前状态，不做任务操作（属于成员面板/任务面板的职责）。
+// 任务卡片消息在任务存在时渲染带操作的 TaskCard，否则退回消息文本。
 import { useEffect, useRef } from 'react'
 import type { AgentConfig, ChatMessage, Task } from '../../../shared/types'
+import TaskCard from './TaskCard'
 
 interface ChatTimelineProps {
   messages: ChatMessage[]
   tasks: Task[]
   agents: AgentConfig[]
+  /** 任务 id -> 最近几行进度，由 App 从 task-progress 事件累积。 */
+  progress?: Record<string, string[]>
 }
 
 export default function ChatTimeline({
   messages,
   tasks,
-  agents
+  agents,
+  progress = {}
 }: ChatTimelineProps): React.JSX.Element {
   const listRef = useRef<HTMLDivElement>(null)
   const agentNames = new Map(agents.map((agent) => [agent.id, agent.name]))
+  const agentsById = new Map(agents.map((agent) => [agent.id, agent]))
   const tasksById = new Map(tasks.map((task) => [task.id, task]))
 
   // 新消息到达时滚到底部，保证用户始终看到最新一条
@@ -49,11 +54,15 @@ export default function ChatTimeline({
                   className="message message-task-card"
                   data-testid="message-task-card"
                 >
-                  <p className="message-content">{message.content}</p>
-                  {task !== undefined && (
-                    <span className="message-task-status" data-testid="task-card-status">
-                      任务状态：{task.status}
-                    </span>
+                  {task !== undefined ? (
+                    <TaskCard
+                      task={task}
+                      agent={agentsById.get(task.agentId)}
+                      progress={progress[task.id] ?? []}
+                      agents={agents}
+                    />
+                  ) : (
+                    <p className="message-content">{message.content}</p>
                   )}
                 </article>
               )

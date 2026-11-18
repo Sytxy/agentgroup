@@ -1,7 +1,14 @@
 // 应用外壳：加载工作区列表，选中后拉起初始数据，并渲染三栏布局。
 // 初始状态一律通过 IPC 主动拉取，不依赖事件推送（事件可能在订阅前已经发出）。
 import { useCallback, useEffect, useState } from 'react'
-import type { AgentConfig, ChatMessage, Task, Workspace } from '../../shared/types'
+import type {
+  AgentConfig,
+  ChatMessage,
+  Task,
+  TaskStatus,
+  VerificationStatus,
+  Workspace
+} from '../../shared/types'
 import {
   getWorkspaceDiff,
   listAgents,
@@ -11,10 +18,46 @@ import {
   sendChatMessage,
   type DiffStat
 } from './api'
+import AgentPanel from './components/AgentPanel'
 import ChatTimeline from './components/ChatTimeline'
 import Composer from './components/Composer'
+import SettingsDialog from './components/SettingsDialog'
 import Sidebar from './components/Sidebar'
 import WorkspaceSetup from './components/WorkspaceSetup'
+
+const VERIFICATION_LABELS: Record<VerificationStatus, string> = {
+  unknown: '未验证',
+  passed: '测试通过',
+  failed: '测试失败'
+}
+
+/** 任务进入这些状态后不再产生进度，可以清理进度缓存。 */
+const PROGRESS_TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set([
+  'done',
+  'merging',
+  'merged',
+  'conflict',
+  'awaiting_approval',
+  'failed',
+  'cancelled',
+  'abandoned',
+  'interrupted'
+])
+
+/**
+ * 主进程会据此改写 lastVerification 的测试任务状态，需与
+ * TaskManager.finish / MergeCoordinator 的验证状态规则保持一致：
+ * done/merged 为通过，其余为失败；merging/awaiting_approval 尚未出验证结果。
+ */
+const VERIFICATION_SETTLED_STATUSES: ReadonlySet<TaskStatus> = new Set([
+  'done',
+  'merged',
+  'failed',
+  'conflict',
+  'cancelled',
+  'abandoned',
+  'interrupted'
+])
 
 export default function App(): React.JSX.Element {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
@@ -26,6 +69,10 @@ export default function App(): React.JSX.Element {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [agents, setAgents] = useState<AgentConfig[]>([])
+  // task-progress 只保留最近几行，任务进入终态后删除，避免长时间运行时无限增长
+  const [progress, setProgress] = useState<Record<string, string[]>>({})
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [copyNotice, setCopyNotice] = useState<string | null>(null)
 
   // 挂载时加载工作区列表，存在工作区则默认选中第一个
   useEffect(() => {
@@ -63,6 +110,8 @@ export default function App(): React.JSX.Element {
     setTasks([])
     setAgents([])
     setDiff(null)
+    setProgress({})
+    setCopyNotice(null)
     setDetailError(null)
     void (async () => {
       try {
@@ -139,8 +188,44 @@ export default function App(): React.JSX.Element {
             ? current.map((item) => (item.id === task.id ? task : item))
             : [...current, task]
         )
+        // 任务结束后不再有进度推送，释放缓存
+        if (PROGRESS_TERMINAL_STATUSES.has(task.status)) {
+          setProgress((current) => {
+            if (!Object.prototype.hasOwnProperty.call(current, task.id)) {
+              return current
+            }
+            const next = { ...current }
+            delete next[task.id]
+            return next
+          })
+        }
+        // 测试任务结束即代表一次验证。主进程只更新数据库，不推送工作区事件，
+        // 这里按同一规则（done/merged 为通过，其余终态为失败）同步顶部状态。
+        if (
+          task.taskType === 'test' &&
+          VERIFICATION_SETTLED_STATUSES.has(task.status)
+        ) {
+          const verification: VerificationStatus =
+            task.status === 'done' || task.status === 'merged' ? 'passed' : 'failed'
+          setWorkspaces((current) =>
+            current.map((workspace) =>
+              workspace.id === task.workspaceId
+                ? { ...workspace, lastVerification: verification }
+                : workspace
+            )
+          )
+        }
+        return
       }
-      // task-progress / agent-status 供后续任务面板与成员面板使用，这里暂不处理
+      if (event.type === 'task-progress') {
+        // 只保留最近 5 行；事件可能属于其他工作区，但 id 全局唯一，留着也不会串台
+        setProgress((current) => ({
+          ...current,
+          [event.taskId]: [...(current[event.taskId] ?? []), ...event.lines].slice(-5)
+        }))
+        return
+      }
+      // agent-status 事件不单独跟踪：成员面板直接从 tasks 推导忙碌状态
     })
   }, [selectedId])
 
@@ -159,6 +244,14 @@ export default function App(): React.JSX.Element {
     }
     setSelectedId(created.id)
   }, [])
+
+  // 成员添加/删除后重新拉取列表；响应是权威快照，直接替换
+  const handleAgentsChanged = useCallback(async (): Promise<void> => {
+    if (selectedId === null) {
+      return
+    }
+    setAgents(await listAgents(selectedId))
+  }, [selectedId])
 
   // 发送消息后把返回的消息与任务并入本地状态；错误交给 Composer 展示。
   const handleSend = useCallback(
@@ -207,6 +300,21 @@ export default function App(): React.JSX.Element {
     return <div className="app-loading">正在加载工作区…</div>
   }
 
+  const mergeCommand = `git merge ${selected.integrationBranch}`
+
+  // 复制失败时把命令直接展示出来，用户仍可手动执行（Electron 某些环境没有剪贴板权限）
+  const handleCopyMergeCommand = async (): Promise<void> => {
+    try {
+      if (navigator.clipboard === undefined) {
+        throw new Error('当前环境不支持剪贴板')
+      }
+      await navigator.clipboard.writeText(mergeCommand)
+      setCopyNotice('已复制')
+    } catch {
+      setCopyNotice(`复制失败，请手动执行：${mergeCommand}`)
+    }
+  }
+
   return (
     <div className="app-shell">
       <Sidebar
@@ -228,9 +336,36 @@ export default function App(): React.JSX.Element {
             <span className="workspace-branch">
               目标分支：{selected.targetBranch ?? '未设置'}
             </span>
+            <span
+              className={`verification verification-${selected.lastVerification}`}
+              data-testid="verification-status"
+            >
+              {VERIFICATION_LABELS[selected.lastVerification]}
+            </span>
             {diff !== null && (
               <span className="diff-stat" data-testid="diff-stat">
                 {diff.files} 个文件 · +{diff.insertions} · -{diff.deletions}
+              </span>
+            )}
+          </div>
+          <div className="workspace-header-actions">
+            <button
+              type="button"
+              className="header-button"
+              onClick={() => void handleCopyMergeCommand()}
+            >
+              复制合入命令
+            </button>
+            <button
+              type="button"
+              className="header-button"
+              onClick={() => setSettingsOpen(true)}
+            >
+              设置
+            </button>
+            {copyNotice !== null && (
+              <span className="copy-notice" role="status">
+                {copyNotice}
               </span>
             )}
           </div>
@@ -243,16 +378,38 @@ export default function App(): React.JSX.Element {
 
         <div className="workspace-body">
           <section className="chat-column">
-            <ChatTimeline messages={messages} tasks={tasks} agents={agents} />
+            <ChatTimeline
+              messages={messages}
+              tasks={tasks}
+              agents={agents}
+              progress={progress}
+            />
             <Composer agents={agents} onSend={handleSend} />
           </section>
 
-          <aside className="agent-column" data-testid="agent-panel">
-            <h2 className="panel-title">Agent 成员</h2>
-            <p className="panel-empty">成员面板将在这里显示。</p>
-            <p className="panel-meta">已加载 {agents.length} 位成员</p>
-          </aside>
+          <AgentPanel
+            workspaceId={selected.id}
+            agents={agents}
+            tasks={tasks}
+            onChanged={handleAgentsChanged}
+          />
         </div>
+
+        {settingsOpen && (
+          <SettingsDialog
+            workspace={selected}
+            agents={agents}
+            onSaved={(updated) => {
+              setWorkspaces((current) =>
+                current.map((workspace) =>
+                  workspace.id === updated.id ? updated : workspace
+                )
+              )
+              setSettingsOpen(false)
+            }}
+            onClose={() => setSettingsOpen(false)}
+          />
+        )}
       </main>
     </div>
   )

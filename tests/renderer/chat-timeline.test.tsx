@@ -116,8 +116,8 @@ describe('群聊时间线', () => {
     const card = screen.getByTestId('message-task-card')
     expect(card).toHaveClass('message-task-card')
     expect(card).toHaveTextContent('修复登录')
-    // 任务卡片展示对应任务的当前状态
-    expect(card).toHaveTextContent('running')
+    // 任务卡片展示对应任务的当前状态（中文标签）
+    expect(card).toHaveTextContent('运行中')
 
     // Agent 消息展示成员名而不是 id
     const agentMessage = screen.getByTestId('message-agent')

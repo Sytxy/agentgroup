@@ -83,3 +83,58 @@ export async function sendChatMessage(
     text
   })) as ChatSendResult
 }
+
+// ---- 任务操作 ----
+
+export async function cancelTask(taskId: string): Promise<void> {
+  await window.api.invoke(IPC.tasksCancel, { taskId })
+}
+
+export async function retryTask(taskId: string): Promise<void> {
+  await window.api.invoke(IPC.tasksRetry, { taskId })
+}
+
+export async function approveMerge(taskId: string): Promise<void> {
+  await window.api.invoke(IPC.tasksApproveMerge, { taskId })
+}
+
+export async function abandonTask(taskId: string): Promise<void> {
+  await window.api.invoke(IPC.tasksAbandon, { taskId })
+}
+
+/** 在系统文件管理器中打开任务的 worktree，返回实际打开的路径。 */
+export async function openTaskWorktree(taskId: string): Promise<string> {
+  return (await window.api.invoke(IPC.tasksOpenWorktree, { taskId })) as string
+}
+
+/** 重新准备冲突任务的 worktree 现场（目录被清理时会重新检出），返回路径。 */
+export async function prepareResolveWorktree(taskId: string): Promise<string> {
+  return (await window.api.invoke(IPC.tasksPrepareResolve, { taskId })) as string
+}
+
+export async function markTaskResolved(taskId: string): Promise<void> {
+  await window.api.invoke(IPC.tasksMarkResolved, { taskId })
+}
+
+/** 为冲突任务创建 resolve 任务并指派给指定 Agent。 */
+export async function createResolveTask(taskId: string, agentId: string): Promise<Task> {
+  return (await window.api.invoke(IPC.tasksCreateResolve, {
+    taskId,
+    agentId
+  })) as Task
+}
+
+/** 读取任务完整日志；日志不存在时主进程返回空字符串。 */
+export async function getTaskLog(taskId: string): Promise<string> {
+  return (await window.api.invoke(IPC.tasksLog, { taskId })) as string
+}
+
+// ---- 成员管理 ----
+
+export async function addAgent(input: AgentConfig): Promise<AgentConfig> {
+  return (await window.api.invoke(IPC.agentsAdd, input)) as AgentConfig
+}
+
+export async function removeAgent(agentId: string): Promise<void> {
+  await window.api.invoke(IPC.agentsRemove, { agentId })
+}

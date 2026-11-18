@@ -1,9 +1,10 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, Notification, shell } from 'electron'
 import { IPC } from '../shared/ipc'
 import { createAppContext, type AppContext } from './app-context'
 import { createIpcHandlers } from './ipc-handlers'
+import { notifyTaskFinished } from './notifications'
 
 /** 应用上下文在 whenReady 后创建；will-quit 时用来关闭数据库。 */
 let context: AppContext | null = null
@@ -69,6 +70,26 @@ function forwardEvents(appContext: AppContext): void {
   })
 }
 
+/**
+ * 任务终态的系统通知。
+ * 通知失败（系统权限、窗口销毁等）只记录日志，不能冒泡回 EventBus 影响任务编排。
+ */
+function subscribeTaskNotifications(appContext: AppContext): void {
+  if (!Notification.isSupported()) {
+    return
+  }
+  appContext.events.on((event) => {
+    if (event.type !== 'task-updated') {
+      return
+    }
+    try {
+      notifyTaskFinished(event.task, Notification)
+    } catch (error) {
+      console.error('发送任务通知失败', error)
+    }
+  })
+}
+
 void app
   .whenReady()
   .then(async () => {
@@ -93,6 +114,7 @@ void app
     }
 
     forwardEvents(appContext)
+    subscribeTaskNotifications(appContext)
     createWindow()
 
     // 恢复顺序：先把上次未合并的 done 任务重新交给合并协调器，再启动调度。
