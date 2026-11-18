@@ -8,7 +8,7 @@ import { MessageRepo } from '../../src/main/db/message-repo'
 import { TaskRepo } from '../../src/main/db/task-repo'
 import { WorkspaceRepo } from '../../src/main/db/workspace-repo'
 import { EventBus } from '../../src/main/events'
-import { GitService } from '../../src/main/services/git/git'
+import { GitService, runGit } from '../../src/main/services/git/git'
 import { SetupRunner } from '../../src/main/services/tasks/setup-runner'
 import { TaskManager } from '../../src/main/services/tasks/task-manager'
 import {
@@ -149,7 +149,12 @@ describe('crash recovery', () => {
     insertAgent()
     const preparing = insertTask({ title: 'Preparing', status: 'preparing' })
     const running = insertTask({ title: 'Running', status: 'running' })
-    const merging = insertTask({ title: 'Merging', status: 'merging' })
+    const merging = insertTask({
+      title: 'Merging',
+      status: 'merging',
+      // 合并流程会先经 finish 写入结束时间，恢复时必须清掉
+      finishedAt: FIXED_TIME
+    })
     const queued = insertTask({ title: 'Still queued', status: 'queued' })
 
     const manager = createManager(new FakeAdapter())
@@ -263,6 +268,52 @@ describe('crash recovery', () => {
       '只有中断、失败或取消的任务可以重试'
     )
     expect(tasks.get(task.id)?.status).toBe('merged')
+  })
+
+  test('retry cleanup failure produces a readable error and leaves the task retryable', async () => {
+    insertAgent()
+    const id = randomUUID()
+    const worktreePath = join(worktreesRoot, workspace.id, id)
+    const branch = `agent/${id}-cleanup-failure`
+    const baseRef = await git.revParse(tempRepo.path, INTEGRATION_BRANCH)
+
+    await mkdir(dirname(worktreePath), { recursive: true })
+    await git.worktreeAdd(tempRepo.path, worktreePath, branch, baseRef)
+
+    const task = insertTask({
+      title: 'Cleanup failure',
+      status: 'failed',
+      branch,
+      worktreePath,
+      baseRef
+    })
+
+    // 只让 worktree 清理失败，其余 git 命令仍走真实实现
+    const failingGit = new GitService(async (cwd, args) => {
+      if (args[0] === 'worktree' && args[1] === 'remove') {
+        throw new Error('cannot remove worktree')
+      }
+      return runGit(cwd, args)
+    })
+    const failingManager = createManager(new FakeAdapter(), { git: failingGit })
+
+    await expect(failingManager.retry(task.id)).rejects.toThrow(
+      '重试前清理任务现场失败：cannot remove worktree'
+    )
+    // 清理失败：不广播、不改状态、不入队，现场保持原样
+    expect(tasks.get(task.id)?.status).toBe('failed')
+    expect(recordStatuses(task.id)).toEqual([])
+    expect(existsSync(worktreePath)).toBe(true)
+    expect(await git.branchExists(tempRepo.path, branch)).toBe(true)
+
+    // 状态未被破坏，换回正常 git 后可再次重试并成功执行
+    const adapter = new FakeAdapter({
+      steps: [{ event: { type: 'final', summary: '重试完成' } }]
+    })
+    const manager = createManager(adapter)
+    await manager.retry(task.id)
+    await waitFor(() => tasks.get(task.id)?.status === 'done')
+    expect(adapter.runs).toHaveLength(1)
   })
 
   test('retry re-queues a resolve task without touching the parent conflict scene', async () => {

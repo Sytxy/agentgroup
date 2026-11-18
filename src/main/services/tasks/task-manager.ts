@@ -130,7 +130,8 @@ export class TaskManager {
             // 没有进行中的合并，无需处理
           }
 
-          this.tasks.update(task.id, { status: 'interrupted' })
+          // 即使 merging 任务此前经 finish 写入过结束时间，中断态也不能带完成时间
+          this.tasks.update(task.id, { status: 'interrupted', finishedAt: null })
           this.emitTask(task.id)
         }
       }
