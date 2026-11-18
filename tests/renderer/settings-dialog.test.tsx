@@ -57,11 +57,14 @@ describe('工作区设置', () => {
     window.api = { invoke, onEvent: vi.fn(() => () => {}) }
 
     const onSaved = vi.fn()
+    const onUserNameSaved = vi.fn()
     const onClose = vi.fn()
     render(
       <SettingsDialog
         workspace={workspace}
         agents={[agent('a1', 'claude'), agent('a2', 'codex')]}
+        userName="我"
+        onUserNameSaved={onUserNameSaved}
         onSaved={onSaved}
         onClose={onClose}
       />
@@ -70,6 +73,7 @@ describe('工作区设置', () => {
     const select = screen.getByLabelText('默认 Agent（未 @ 时）') as HTMLSelectElement
     expect(select.value).toBe('a1')
     fireEvent.change(select, { target: { value: 'a2' } })
+    fireEvent.change(screen.getByLabelText('我的名字'), { target: { value: '张三' } })
     fireEvent.click(screen.getByText('保存设置'))
 
     await waitFor(() => {
@@ -82,6 +86,7 @@ describe('工作区设置', () => {
       )
     })
     await waitFor(() => expect(onSaved).toHaveBeenCalled())
+    expect(onUserNameSaved).toHaveBeenCalledWith('张三')
   })
 
   test('停用的默认 Agent 在表单里显示为不设置', () => {
@@ -90,6 +95,8 @@ describe('工作区设置', () => {
       <SettingsDialog
         workspace={workspace}
         agents={[agent('a1', 'claude', false)]}
+        userName="我"
+        onUserNameSaved={vi.fn()}
         onSaved={vi.fn()}
         onClose={vi.fn()}
       />

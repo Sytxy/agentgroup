@@ -140,6 +140,14 @@ export async function removeAgent(agentId: string): Promise<void> {
   await window.api.invoke(IPC.agentsRemove, { agentId })
 }
 
+/** 重命名成员；名称只影响后续分派与展示，历史消息保留原 id。 */
+export async function renameAgent(agentId: string, name: string): Promise<AgentConfig> {
+  return (await window.api.invoke(IPC.agentsUpdate, {
+    agentId,
+    patch: { name }
+  })) as AgentConfig
+}
+
 /** 启用/停用成员。停用后不再向其分派任务，历史任务与消息保留。 */
 export async function setAgentEnabled(agentId: string, enabled: boolean): Promise<AgentConfig> {
   return (await window.api.invoke(IPC.agentsUpdate, {

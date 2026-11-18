@@ -982,7 +982,8 @@ select:focus-visible {
 }
 
 .agent-toggle-button,
-.agent-remove-button {
+.agent-remove-button,
+.agent-rename-button {
   flex-shrink: 0;
   padding: 3px 4px;
   border: 0;
@@ -991,6 +992,10 @@ select:focus-visible {
   font-size: 0.64rem;
   cursor: pointer;
   transition: color 140ms ease;
+}
+
+.agent-rename-button:hover:not(:disabled) {
+  color: var(--accent);
 }
 
 .agent-toggle-button:hover:not(:disabled) {
@@ -1002,7 +1007,54 @@ select:focus-visible {
 }
 
 .agent-toggle-button:disabled,
-.agent-remove-button:disabled {
+.agent-remove-button:disabled,
+.agent-rename-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.agent-name-input {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.agent-name-input:focus {
+  outline: 0;
+  box-shadow: var(--focus-ring);
+}
+
+.agent-save-button,
+.agent-cancel-button {
+  flex-shrink: 0;
+  padding: 3px 7px;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  cursor: pointer;
+}
+
+.agent-save-button {
+  border: 0;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-weight: 600;
+}
+
+.agent-cancel-button {
+  border: 1px solid var(--line);
+  background: var(--chip-bg);
+  color: var(--muted);
+}
+
+.agent-save-button:disabled,
+.agent-cancel-button:disabled {
   opacity: 0.4;
   cursor: default;
 }

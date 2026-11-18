@@ -92,6 +92,21 @@ afterEach(() => {
 })
 
 describe('群聊时间线', () => {
+  test('uses the configured display name for user messages', () => {
+    render(
+      <ChatTimeline
+        messages={[message('m1', 'user', '你好')]}
+        tasks={[]}
+        agents={[]}
+        userName="张三"
+      />
+    )
+
+    const user = screen.getByTestId('message-user')
+    expect(user).toHaveTextContent('张三')
+    expect(user).not.toHaveTextContent('我')
+  })
+
   test('timeline renders user, system and task-card messages differently', () => {
     render(
       <ChatTimeline
@@ -109,6 +124,7 @@ describe('群聊时间线', () => {
     const user = screen.getByTestId('message-user')
     expect(user).toHaveClass('message-user')
     expect(user).toHaveTextContent('请修复登录')
+    expect(user).toHaveTextContent('我')
 
     const system = screen.getByTestId('message-system')
     expect(system).toHaveClass('message-system')

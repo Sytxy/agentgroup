@@ -8,6 +8,8 @@ interface ChatTimelineProps {
   messages: ChatMessage[]
   tasks: Task[]
   agents: AgentConfig[]
+  /** 用户消息的署名；默认“我”，可在设置里修改。 */
+  userName?: string
   /** 任务 id -> 最近几行进度，由 App 从 task-progress 事件累积。 */
   progress?: Record<string, string[]>
   /**
@@ -21,6 +23,7 @@ export default function ChatTimeline({
   messages,
   tasks,
   agents,
+  userName = '我',
   progress = {},
   activeResolveByParent = new Map<string, Task>()
 }: ChatTimelineProps): React.JSX.Element {
@@ -125,7 +128,7 @@ export default function ChatTimeline({
                 className="message message-user"
                 data-testid="message-user"
               >
-                <span className="message-author">我</span>
+                <span className="message-author">{userName}</span>
                 <p className="message-content">{message.content}</p>
               </article>
             )

@@ -3,7 +3,7 @@
 // 历史任务与消息只保存 id，不受影响。
 import { useState } from 'react'
 import type { AgentConfig, Task } from '../../../shared/types'
-import { removeAgent, setAgentEnabled } from '../api'
+import { removeAgent, renameAgent, setAgentEnabled } from '../api'
 import AddAgentDialog from './AddAgentDialog'
 
 interface AgentPanelProps {
@@ -27,6 +27,8 @@ export default function AgentPanel({
   const [error, setError] = useState<string | null>(null)
   const [removingId, setRemovingId] = useState<string | null>(null)
   const [updatingId, setUpdatingId] = useState<string | null>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [draftName, setDraftName] = useState('')
 
   // 同一 Agent 同一时间只运行一个任务；存在执行中的任务即视为忙碌
   const busyAgentIds = new Set(
@@ -65,6 +67,41 @@ export default function AgentPanel({
     setError(null)
     try {
       await setAgentEnabled(agent.id, !agent.enabled)
+      await onChanged()
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setUpdatingId(null)
+    }
+  }
+
+  const startRename = (agent: AgentConfig): void => {
+    setEditingId(agent.id)
+    setDraftName(agent.name)
+    setError(null)
+  }
+
+  const cancelRename = (): void => {
+    setEditingId(null)
+    setDraftName('')
+  }
+
+  /** 保存改名：空名不提交；名称未变化时直接退出编辑。 */
+  const commitRename = async (agent: AgentConfig): Promise<void> => {
+    const name = draftName.trim()
+    if (name === '') {
+      setError('成员名称不能为空')
+      return
+    }
+    if (name === agent.name) {
+      cancelRename()
+      return
+    }
+    setUpdatingId(agent.id)
+    setError(null)
+    try {
+      await renameAgent(agent.id, name)
+      cancelRename()
       await onChanged()
     } catch (cause) {
       setError(errorMessage(cause))
@@ -139,29 +176,78 @@ export default function AgentPanel({
                     title={stateLabel}
                   />
                 </span>
-                <span className="agent-name">{agent.name}</span>
-                <span className="agent-state">{stateLabel}</span>
-                <button
-                  type="button"
-                  className="agent-toggle-button"
-                  aria-label={`${agent.enabled ? '停用' : '启用'} ${agent.name}`}
-                  disabled={updatingId === agent.id || removingId === agent.id}
-                  onClick={() => void handleToggleEnabled(agent)}
-                >
-                  {agent.enabled ? '停用' : '启用'}
-                </button>
-                <button
-                  type="button"
-                  className="agent-remove-button"
-                  aria-label={`删除 ${agent.name}`}
-                  // 运行中的任务仍在使用该成员与其 worktree，删除会让现场失去归属，
-                  // 因此忙碌时只允许停用，等任务结束再删除。
-                  disabled={removingId === agent.id || busy}
-                  title={busy ? '成员正在执行任务，结束后才能删除' : undefined}
-                  onClick={() => void handleRemove(agent)}
-                >
-                  删除
-                </button>
+                {editingId === agent.id ? (
+                  <>
+                    <input
+                      className="agent-name-input"
+                      aria-label={`重命名 ${agent.name}`}
+                      value={draftName}
+                      autoFocus
+                      disabled={updatingId === agent.id}
+                      onChange={(event) => setDraftName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          void commitRename(agent)
+                        } else if (event.key === 'Escape') {
+                          event.preventDefault()
+                          cancelRename()
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      className="agent-save-button"
+                      disabled={updatingId === agent.id}
+                      onClick={() => void commitRename(agent)}
+                    >
+                      保存
+                    </button>
+                    <button
+                      type="button"
+                      className="agent-cancel-button"
+                      disabled={updatingId === agent.id}
+                      onClick={cancelRename}
+                    >
+                      取消
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="agent-name">{agent.name}</span>
+                    <span className="agent-state">{stateLabel}</span>
+                    <button
+                      type="button"
+                      className="agent-rename-button"
+                      aria-label={`重命名 ${agent.name}`}
+                      disabled={updatingId === agent.id || removingId === agent.id}
+                      onClick={() => startRename(agent)}
+                    >
+                      改名
+                    </button>
+                    <button
+                      type="button"
+                      className="agent-toggle-button"
+                      aria-label={`${agent.enabled ? '停用' : '启用'} ${agent.name}`}
+                      disabled={updatingId === agent.id || removingId === agent.id}
+                      onClick={() => void handleToggleEnabled(agent)}
+                    >
+                      {agent.enabled ? '停用' : '启用'}
+                    </button>
+                    <button
+                      type="button"
+                      className="agent-remove-button"
+                      aria-label={`删除 ${agent.name}`}
+                      // 运行中的任务仍在使用该成员与其 worktree，删除会让现场失去归属，
+                      // 因此忙碌时只允许停用，等任务结束再删除。
+                      disabled={removingId === agent.id || busy}
+                      title={busy ? '成员正在执行任务，结束后才能删除' : undefined}
+                      onClick={() => void handleRemove(agent)}
+                    >
+                      删除
+                    </button>
+                  </>
+                )}
               </li>
             )
           })}

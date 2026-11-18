@@ -31,6 +31,18 @@ const VERIFICATION_LABELS: Record<VerificationStatus, string> = {
   failed: '测试失败'
 }
 
+/** 本地显示名：只影响群聊里“我”的署名，不写入工作区数据库。 */
+const USER_NAME_KEY = 'agentgroup.userName'
+const DEFAULT_USER_NAME = '我'
+
+function readUserName(): string {
+  try {
+    return window.localStorage.getItem(USER_NAME_KEY)?.trim() || DEFAULT_USER_NAME
+  } catch {
+    return DEFAULT_USER_NAME
+  }
+}
+
 /** 任务进入这些状态后不再产生进度，可以清理进度缓存。 */
 const PROGRESS_TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set([
   'done',
@@ -89,6 +101,7 @@ export default function App(): React.JSX.Element {
   const [settingsOpen, setSettingsOpen] = useState(false)
   // 成员面板默认收起，把宽度让给聊天区；点顶部“成员”再展开。
   const [agentPanelOpen, setAgentPanelOpen] = useState(false)
+  const [userName, setUserName] = useState(readUserName)
   const [copyNotice, setCopyNotice] = useState<string | null>(null)
 
   // 挂载时加载工作区列表，存在工作区则默认选中第一个
@@ -294,6 +307,17 @@ export default function App(): React.JSX.Element {
     setAgents(await listAgents(selectedId))
   }, [selectedId])
 
+  // 本地显示名只存 localStorage；空名回退为“我”。
+  const handleUserNameSaved = useCallback((name: string): void => {
+    const next = name.trim() || DEFAULT_USER_NAME
+    try {
+      window.localStorage.setItem(USER_NAME_KEY, next)
+    } catch {
+      // 存储不可用时仍更新当前会话的显示名
+    }
+    setUserName(next)
+  }, [])
+
   // 发送消息后把返回的消息与任务并入本地状态；错误交给 Composer 展示。
   const handleSend = useCallback(
     async (text: string): Promise<void> => {
@@ -469,6 +493,7 @@ export default function App(): React.JSX.Element {
               messages={messages}
               tasks={tasks}
               agents={agents}
+              userName={userName}
               progress={progress}
               activeResolveByParent={activeResolveByParent}
             />
@@ -490,6 +515,8 @@ export default function App(): React.JSX.Element {
           <SettingsDialog
             workspace={selected}
             agents={agents}
+            userName={userName}
+            onUserNameSaved={handleUserNameSaved}
             onSaved={(updated) => {
               setWorkspaces((current) =>
                 current.map((workspace) =>

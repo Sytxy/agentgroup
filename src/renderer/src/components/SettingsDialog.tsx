@@ -7,6 +7,9 @@ import { updateWorkspace, type WorkspaceSettingsPatch } from '../api'
 interface SettingsDialogProps {
   workspace: Workspace
   agents: AgentConfig[]
+  /** 本机显示名，只影响群聊里用户消息的署名。 */
+  userName: string
+  onUserNameSaved: (name: string) => void
   onSaved: (workspace: Workspace) => void
   onClose: () => void
 }
@@ -14,9 +17,12 @@ interface SettingsDialogProps {
 export default function SettingsDialog({
   workspace,
   agents,
+  userName,
+  onUserNameSaved,
   onSaved,
   onClose
 }: SettingsDialogProps): React.JSX.Element {
+  const [displayName, setDisplayName] = useState(userName)
   const [autoMerge, setAutoMerge] = useState(workspace.autoMerge)
   const [autoTestAfterMerge, setAutoTestAfterMerge] = useState(workspace.autoTestAfterMerge)
   const [setupCommand, setSetupCommand] = useState(workspace.setupCommand ?? '')
@@ -74,6 +80,7 @@ export default function SettingsDialog({
         setupTimeoutMin: setupTimeout
       }
       const updated = await updateWorkspace(workspace.id, patch)
+      onUserNameSaved(displayName)
       onSaved(updated)
     } catch (cause) {
       setError(errorMessage(cause))
@@ -92,6 +99,21 @@ export default function SettingsDialog({
         onSubmit={handleSubmit}
       >
         <h2 className="dialog-title">工作区设置</h2>
+
+        <label className="dialog-field" htmlFor="settings-user-name">
+          我的名字
+          <input
+            id="settings-user-name"
+            type="text"
+            value={displayName}
+            maxLength={20}
+            placeholder="我"
+            onChange={(event) => setDisplayName(event.target.value)}
+          />
+        </label>
+        <p className="dialog-hint">
+          只保存在本机，用于群聊里显示你的消息；留空则显示“我”。
+        </p>
 
         <label className="dialog-checkbox">
           <input

@@ -257,6 +257,19 @@ describe('createIpcHandlers', () => {
     expect(agents.update).toHaveBeenCalledWith('a1', { rolePrompt: '新的角色说明' })
   })
 
+  test('agents:update trims names and rejects blank names', async () => {
+    const { ctx, agents } = makeFakeContext()
+    agents.get.mockReturnValue(agent)
+    const handlers = createIpcHandlers(ctx)
+
+    await handlers[IPC.agentsUpdate]!({ agentId: 'a1', patch: { name: '  主程  ' } })
+    expect(agents.update).toHaveBeenCalledWith('a1', { name: '主程' })
+
+    await expect(
+      handlers[IPC.agentsUpdate]!({ agentId: 'a1', patch: { name: '   ' } })
+    ).rejects.toThrow(`${IPC.agentsUpdate} 失败：成员名称不能为空`)
+  })
+
   test('unknown channel rejects with a readable error', async () => {
     const { ctx } = makeFakeContext()
     const handlers = createIpcHandlers(ctx)

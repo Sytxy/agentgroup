@@ -47,8 +47,9 @@ function installApi(): ReturnType<typeof vi.fn> {
     if (channel !== 'agents:update') {
       throw new Error(`未预期的 IPC 通道：${channel}`)
     }
-    const input = payload as { agentId: string; patch: { enabled: boolean } }
-    return { ...agent(input.agentId, input.agentId), enabled: input.patch.enabled }
+    const input = payload as { agentId: string; patch: { enabled?: boolean; name?: string } }
+    const base = agent(input.agentId, input.patch.name ?? input.agentId)
+    return { ...base, enabled: input.patch.enabled ?? base.enabled }
   })
   window.api = {
     invoke,
@@ -107,5 +108,31 @@ describe('Agent 成员面板', () => {
         patch: { enabled: true }
       })
     })
+  })
+
+  test('renaming an agent saves the trimmed name', async () => {
+    const invoke = installApi()
+    const onChanged = vi.fn()
+    render(
+      <AgentPanel
+        workspaceId="w1"
+        agents={[agent('a1', 'claude')]}
+        tasks={[]}
+        onChanged={onChanged}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '重命名 claude' }))
+    const input = screen.getByLabelText('重命名 claude')
+    fireEvent.change(input, { target: { value: '  主程  ' } })
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('agents:update', {
+        agentId: 'a1',
+        patch: { name: '主程' }
+      })
+    })
+    expect(onChanged).toHaveBeenCalled()
   })
 })

@@ -381,7 +381,11 @@ function agentUpdatePatch(payload: unknown): AgentPatch {
   // workspaceId 不在白名单内：Agent 必须留在创建时所属的工作区，避免历史任务
   // 与本工作区的成员列表、测试 Agent 配置出现跨工作区引用。
   if (input['name'] !== undefined) {
-    patch.name = requiredString(input, 'name')
+    const name = requiredString(input, 'name').trim()
+    if (name === '') {
+      throw new Error('成员名称不能为空')
+    }
+    patch.name = name
   }
   if (input['preset'] !== undefined) {
     const preset = requiredString(input, 'preset')
