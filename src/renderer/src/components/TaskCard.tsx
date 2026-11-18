@@ -22,6 +22,12 @@ interface TaskCardProps {
   progress: string[]
   /** 当前工作区的全部成员，用于冲突卡片选择解决 Agent。 */
   agents: AgentConfig[]
+  /**
+   * 该冲突任务当前仍在进行的解决任务（queued/preparing/running/done/merging）。
+   * 解决任务与父任务共享同一 worktree，存在时父任务卡片不能提供
+   * 指派/打开/标记/放弃操作，避免两个操作同时修改同一现场。
+   */
+  activeResolveTask?: Task
 }
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -49,7 +55,8 @@ export default function TaskCard({
   task,
   agent,
   progress,
-  agents
+  agents,
+  activeResolveTask
 }: TaskCardProps): React.JSX.Element {
   const [resolveAgentId, setResolveAgentId] = useState('')
   const [logOpen, setLogOpen] = useState(false)
@@ -61,6 +68,8 @@ export default function TaskCard({
 
   const enabledAgents = agents.filter((item) => item.enabled)
   const recentProgress = progress.slice(-5)
+  // 冲突现场正被解决任务占用：隐藏所有会并发操作同一 worktree 的按钮
+  const resolveInProgress = task.status === 'conflict' && activeResolveTask !== undefined
 
   /** 统一处理操作按钮：执行期间禁用其他按钮，失败时展示可读错误。 */
   const runAction = async (name: string, action: () => Promise<unknown>): Promise<void> => {
@@ -127,6 +136,12 @@ export default function TaskCard({
         <p className="task-card-summary">{task.summary}</p>
       )}
 
+      {resolveInProgress && (
+        <p className="task-card-note" data-testid="resolve-active">
+          解决任务进行中
+        </p>
+      )}
+
       <div className="task-card-progress">
         <span className="task-card-section-label">最近进度</span>
         {recentProgress.length === 0 ? (
@@ -158,7 +173,7 @@ export default function TaskCard({
           </button>
         )}
 
-        {task.status === 'conflict' && (
+        {task.status === 'conflict' && !resolveInProgress && (
           <>
             <label className="task-card-resolve">
               解决 Agent
@@ -228,18 +243,19 @@ export default function TaskCard({
           </button>
         )}
 
-        {(task.status === 'conflict' ||
-          task.status === 'awaiting_approval' ||
-          RETRYABLE.has(task.status)) && (
-          <button
-            type="button"
-            className="task-card-button task-card-button-danger"
-            disabled={pendingAction !== null}
-            onClick={() => void runAction('abandon', () => abandonTask(task.id))}
-          >
-            放弃
-          </button>
-        )}
+        {!resolveInProgress &&
+          (task.status === 'conflict' ||
+            task.status === 'awaiting_approval' ||
+            RETRYABLE.has(task.status)) && (
+            <button
+              type="button"
+              className="task-card-button task-card-button-danger"
+              disabled={pendingAction !== null}
+              onClick={() => void runAction('abandon', () => abandonTask(task.id))}
+            >
+              放弃
+            </button>
+          )}
 
         <button
           type="button"

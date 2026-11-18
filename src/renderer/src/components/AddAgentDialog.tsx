@@ -200,8 +200,11 @@ export default function AddAgentDialog({
 
         {permissionProfile === 'edit-and-run' && (
           <p className="dialog-warning" data-testid="permission-warning" role="alert">
-            警示：「可编辑并运行命令」允许 Agent 修改文件并执行任意命令（构建、测试、安装依赖），
-            命令以你的 macOS 账户权限运行。请只对可信的 CLI 使用此档位。
+            警示：Claude Code 的「可编辑并运行命令」使用 bypassPermissions，
+            <strong>没有目录沙箱</strong>：Agent 不仅能修改任务 worktree，还能读写
+            <strong>整个用户账户</strong>下的文件，并以你的 macOS 账户权限执行任意命令。
+            Codex 使用 workspace-write 沙箱，写入限制在任务 worktree 内，但命令仍以你的账户权限运行。
+            请只对可信的 CLI 使用此档位。
           </p>
         )}
 

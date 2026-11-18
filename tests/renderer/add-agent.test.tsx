@@ -37,7 +37,11 @@ describe('添加 Agent 对话框', () => {
       target: { value: 'edit-and-run' }
     })
     expect(screen.getByTestId('permission-warning')).toHaveTextContent('可编辑并运行命令')
+    // Claude 的 edit-and-run 没有目录沙箱，必须明确告知可以访问整个用户账户
+    expect(screen.getByTestId('permission-warning')).toHaveTextContent('没有目录沙箱')
+    expect(screen.getByTestId('permission-warning')).toHaveTextContent('整个用户账户')
     expect(screen.getByTestId('permission-warning')).toHaveTextContent('macOS 账户权限')
+    expect(screen.getByTestId('permission-warning')).toHaveTextContent('workspace-write')
 
     // 切到自定义预设后命令与参数模板可编辑
     fireEvent.change(screen.getByLabelText('预设'), { target: { value: 'custom' } })

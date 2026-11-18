@@ -59,6 +59,18 @@ const VERIFICATION_SETTLED_STATUSES: ReadonlySet<TaskStatus> = new Set([
   'interrupted'
 ])
 
+/**
+ * 仍在占用冲突现场的解决任务状态，需与 MergeCoordinator 的
+ * ACTIVE_RESOLVE_CHILD_STATUSES 保持一致。
+ */
+const ACTIVE_RESOLVE_STATUSES: ReadonlySet<TaskStatus> = new Set([
+  'queued',
+  'preparing',
+  'running',
+  'done',
+  'merging'
+])
+
 export default function App(): React.JSX.Element {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -66,6 +78,9 @@ export default function App(): React.JSX.Element {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [detailError, setDetailError] = useState<string | null>(null)
   const [diff, setDiff] = useState<DiffStat | null>(null)
+  const [diffError, setDiffError] = useState<string | null>(null)
+  // 数据加载失败（尤其 diff 失败）后允许用户重试；递增该值重新触发加载 effect
+  const [reloadToken, setReloadToken] = useState(0)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [agents, setAgents] = useState<AgentConfig[]>([])
@@ -100,63 +115,89 @@ export default function App(): React.JSX.Element {
     }
   }, [])
 
-  // 选中工作区后加载其初始数据；切换工作区时先清空旧数据，避免串台
+  // 切换工作区时先清空旧数据，避免串台；重试加载不经过这里，界面不会闪空
+  useEffect(() => {
+    setMessages([])
+    setTasks([])
+    setAgents([])
+    setDiff(null)
+    setDiffError(null)
+    setProgress({})
+    setCopyNotice(null)
+    setDetailError(null)
+  }, [selectedId])
+
+  // 选中工作区后加载其初始数据。四项请求彼此独立：差异统计失败（例如集成分支
+  // 暂不可用、目标分支被删除）只影响顶部展示，不能连消息、任务和成员一起丢掉。
   useEffect(() => {
     if (selectedId === null) {
       return
     }
     let cancelled = false
-    setMessages([])
-    setTasks([])
-    setAgents([])
-    setDiff(null)
-    setProgress({})
-    setCopyNotice(null)
-    setDetailError(null)
     void (async () => {
-      try {
-        const [nextMessages, nextTasks, nextAgents, nextDiff] = await Promise.all([
-          listMessages(selectedId),
-          listTasks(selectedId),
-          listAgents(selectedId),
-          getWorkspaceDiff(selectedId)
-        ])
-        if (cancelled) {
-          return
-        }
+      const [messagesResult, tasksResult, agentsResult, diffResult] = await Promise.allSettled([
+        listMessages(selectedId),
+        listTasks(selectedId),
+        listAgents(selectedId),
+        getWorkspaceDiff(selectedId)
+      ])
+      if (cancelled) {
+        return
+      }
+
+      const failures: string[] = []
+
+      if (messagesResult.status === 'fulfilled') {
+        const nextMessages = messagesResult.value
         // 列表响应只是请求发出时的快照。加载期间可能已有实时事件写入 state，
-        // 直接覆盖会丢消息，因此按 id 合并：
-        // - 消息：保留历史顺序，把加载期间到达、快照中没有的消息追加到末尾；
-        // - 任务：同 id 时保留 state 中的版本——它来自请求期间到达的 task-updated，
-        //   一定是比快照更新的观测，响应只补充 state 中尚不存在的任务；
-        // - 成员：没有成员推送事件，列表响应是权威快照，同 id 时以响应为准，
-        //   只保留响应中缺失的成员（成员可能在加载期间被添加）。
+        // 直接覆盖会丢消息，因此按 id 合并：保留历史顺序，把加载期间到达、
+        // 快照中没有的消息追加到末尾。
         setMessages((current) => {
           const historyIds = new Set(nextMessages.map((message) => message.id))
-          return [
-            ...nextMessages,
-            ...current.filter((message) => !historyIds.has(message.id))
-          ]
+          return [...nextMessages, ...current.filter((message) => !historyIds.has(message.id))]
         })
+      } else {
+        failures.push(`消息：${errorMessage(messagesResult.reason)}`)
+      }
+
+      if (tasksResult.status === 'fulfilled') {
+        const nextTasks = tasksResult.value
+        // 同 id 时保留 state 中的版本——它来自请求期间到达的 task-updated，
+        // 一定是比快照更新的观测；响应只补充 state 中尚不存在的任务。
         setTasks((current) => {
           const responseIds = new Set(nextTasks.map((task) => task.id))
           return [...nextTasks, ...current.filter((task) => !responseIds.has(task.id))]
         })
+      } else {
+        failures.push(`任务：${errorMessage(tasksResult.reason)}`)
+      }
+
+      if (agentsResult.status === 'fulfilled') {
+        const nextAgents = agentsResult.value
+        // 成员没有推送事件，列表响应是权威快照；只保留响应中缺失的成员
+        // （成员可能在加载期间被添加）。
         setAgents((current) => {
           const responseIds = new Set(nextAgents.map((agent) => agent.id))
           return [...nextAgents, ...current.filter((agent) => !responseIds.has(agent.id))]
         })
-        setDiff(nextDiff)
-      } catch (cause) {
-        if (!cancelled) {
-          setDetailError(errorMessage(cause))
-        }
+      } else {
+        failures.push(`成员：${errorMessage(agentsResult.reason)}`)
       }
+
+      if (diffResult.status === 'fulfilled') {
+        setDiff(diffResult.value)
+        setDiffError(null)
+      } else {
+        setDiff(null)
+        setDiffError(errorMessage(diffResult.reason))
+      }
+
+      setDetailError(failures.length > 0 ? failures.join('；') : null)
     })()
     return () => {
       cancelled = true
     }
-  }, [selectedId])
+  }, [selectedId, reloadToken])
 
   // 订阅主进程推送。只合并当前工作区的事件并按 id 去重：
   // 发送响应与推送事件可能同时到达，重复合并会让同一条消息出现两次。
@@ -300,6 +341,19 @@ export default function App(): React.JSX.Element {
 
   const mergeCommand = `git merge ${selected.integrationBranch}`
 
+  // 冲突任务被解决任务占用时，卡片必须隐藏会并发修改同一 worktree 的操作。
+  // 同一父任务最多只有一个活动解决任务（后端会拒绝重复指派）。
+  const activeResolveByParent = new Map<string, Task>()
+  for (const task of tasks) {
+    if (
+      task.taskType === 'resolve' &&
+      task.parentTaskId !== null &&
+      ACTIVE_RESOLVE_STATUSES.has(task.status)
+    ) {
+      activeResolveByParent.set(task.parentTaskId, task)
+    }
+  }
+
   // 复制失败时把命令直接展示出来，用户仍可手动执行（Electron 某些环境没有剪贴板权限）
   const handleCopyMergeCommand = async (): Promise<void> => {
     try {
@@ -340,13 +394,33 @@ export default function App(): React.JSX.Element {
             >
               {VERIFICATION_LABELS[selected.lastVerification]}
             </span>
-            {diff !== null && (
-              <span className="diff-stat" data-testid="diff-stat">
-                {diff.files} 个文件 · +{diff.insertions} · -{diff.deletions}
+            {diffError !== null ? (
+              <span
+                className="diff-stat diff-stat-error"
+                data-testid="diff-error"
+                title={diffError}
+              >
+                差异不可用
               </span>
+            ) : (
+              diff !== null && (
+                <span className="diff-stat" data-testid="diff-stat">
+                  {diff.files} 个文件 · +{diff.insertions} · -{diff.deletions}
+                </span>
+              )
             )}
           </div>
           <div className="workspace-header-actions">
+            {(detailError !== null || diffError !== null) && (
+              <button
+                type="button"
+                className="header-button"
+                aria-label="重新加载工作区数据"
+                onClick={() => setReloadToken((value) => value + 1)}
+              >
+                重试
+              </button>
+            )}
             <button
               type="button"
               className="header-button"
@@ -381,6 +455,7 @@ export default function App(): React.JSX.Element {
               tasks={tasks}
               agents={agents}
               progress={progress}
+              activeResolveByParent={activeResolveByParent}
             />
             <Composer agents={agents} onSend={handleSend} />
           </section>

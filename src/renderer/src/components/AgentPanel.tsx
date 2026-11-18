@@ -3,7 +3,7 @@
 // 历史任务与消息只保存 id，不受影响。
 import { useState } from 'react'
 import type { AgentConfig, Task } from '../../../shared/types'
-import { removeAgent } from '../api'
+import { removeAgent, setAgentEnabled } from '../api'
 import AddAgentDialog from './AddAgentDialog'
 
 interface AgentPanelProps {
@@ -23,6 +23,7 @@ export default function AgentPanel({
   const [addOpen, setAddOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [removingId, setRemovingId] = useState<string | null>(null)
+  const [updatingId, setUpdatingId] = useState<string | null>(null)
 
   // 同一 Agent 同一时间只运行一个任务；存在执行中的任务即视为忙碌
   const busyAgentIds = new Set(
@@ -48,6 +49,20 @@ export default function AgentPanel({
       setError(errorMessage(cause))
     } finally {
       setRemovingId(null)
+    }
+  }
+
+  /** 停用/启用成员：停用保留历史记录，只是不再参与 @ 分派和委派。 */
+  const handleToggleEnabled = async (agent: AgentConfig): Promise<void> => {
+    setUpdatingId(agent.id)
+    setError(null)
+    try {
+      await setAgentEnabled(agent.id, !agent.enabled)
+      await onChanged()
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setUpdatingId(null)
     }
   }
 
@@ -88,9 +103,21 @@ export default function AgentPanel({
                 <span className="agent-state">{stateLabel}</span>
                 <button
                   type="button"
+                  className="agent-toggle-button"
+                  aria-label={`${agent.enabled ? '停用' : '启用'} ${agent.name}`}
+                  disabled={updatingId === agent.id || removingId === agent.id}
+                  onClick={() => void handleToggleEnabled(agent)}
+                >
+                  {agent.enabled ? '停用' : '启用'}
+                </button>
+                <button
+                  type="button"
                   className="agent-remove-button"
                   aria-label={`删除 ${agent.name}`}
-                  disabled={removingId === agent.id}
+                  // 运行中的任务仍在使用该成员与其 worktree，删除会让现场失去归属，
+                  // 因此忙碌时只允许停用，等任务结束再删除。
+                  disabled={removingId === agent.id || busy}
+                  title={busy ? '成员正在执行任务，结束后才能删除' : undefined}
                   onClick={() => void handleRemove(agent)}
                 >
                   删除

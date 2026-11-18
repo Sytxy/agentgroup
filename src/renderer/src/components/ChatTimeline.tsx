@@ -10,13 +10,19 @@ interface ChatTimelineProps {
   agents: AgentConfig[]
   /** 任务 id -> 最近几行进度，由 App 从 task-progress 事件累积。 */
   progress?: Record<string, string[]>
+  /**
+   * 父任务 id -> 仍在占用该冲突现场的解决任务。
+   * 冲突卡片据此隐藏会并发操作同一 worktree 的按钮。
+   */
+  activeResolveByParent?: Map<string, Task>
 }
 
 export default function ChatTimeline({
   messages,
   tasks,
   agents,
-  progress = {}
+  progress = {},
+  activeResolveByParent = new Map<string, Task>()
 }: ChatTimelineProps): React.JSX.Element {
   const listRef = useRef<HTMLDivElement>(null)
   const agentNames = new Map(agents.map((agent) => [agent.id, agent.name]))
@@ -60,6 +66,7 @@ export default function ChatTimeline({
                       agent={agentsById.get(task.agentId)}
                       progress={progress[task.id] ?? []}
                       agents={agents}
+                      activeResolveTask={activeResolveByParent.get(task.id)}
                     />
                   ) : (
                     <p className="message-content">{message.content}</p>

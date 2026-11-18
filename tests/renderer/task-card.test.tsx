@@ -150,6 +150,66 @@ describe('任务卡片', () => {
     })
   })
 
+  test('conflict actions are hidden while a resolve task owns the worktree', () => {
+    installApi(taskActions)
+    render(
+      <TaskCard
+        task={makeTask('conflict')}
+        activeResolveTask={makeTask('running', {
+          id: 'resolve-1',
+          taskType: 'resolve',
+          parentTaskId: 't1',
+          agentId: 'a2'
+        })}
+        agents={[agent('a1', 'claude'), agent('a2', 'codex')]}
+        progress={[]}
+      />
+    )
+
+    expect(screen.getByTestId('resolve-active')).toHaveTextContent('解决任务进行中')
+    // 指派/打开/标记/放弃都会并发操作同一 worktree，必须全部隐藏
+    expect(screen.queryByRole('button', { name: '指派 Agent 解决' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '打开 worktree' })).not.toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: '标记已解决并重新合并' })
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '放弃' })).not.toBeInTheDocument()
+    // 只读操作（日志）仍可用
+    expect(screen.getByRole('button', { name: '展开日志' })).toBeInTheDocument()
+  })
+
+  test('App hides conflict actions when a resolve task is still active', async () => {
+    const conflict = makeTask('conflict')
+    const resolve = makeTask('running', {
+      id: 'resolve-1',
+      taskType: 'resolve',
+      parentTaskId: 't1',
+      agentId: 'a2'
+    })
+    const cardMessage: ChatMessage = {
+      id: 'm-card',
+      workspaceId: 'w1',
+      kind: 'task-card',
+      authorType: 'system',
+      authorId: null,
+      content: '修复登录',
+      taskId: 't1',
+      createdAt: '2026-11-18T00:00:00.000Z'
+    }
+    installApi({
+      'workspace:list': () => [workspace],
+      'chat:history': () => [cardMessage],
+      'tasks:list': () => [conflict, resolve],
+      'agents:list': () => [agent('a1', 'claude'), agent('a2', 'codex')],
+      'workspace:diff': () => ({ files: 0, insertions: 0, deletions: 0 })
+    })
+
+    render(<App />)
+    expect(await screen.findByTestId('resolve-active')).toHaveTextContent('解决任务进行中')
+    expect(screen.queryByRole('button', { name: '指派 Agent 解决' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '放弃' })).not.toBeInTheDocument()
+  })
+
   test('failed, cancelled and interrupted tasks offer retry and abandon', async () => {
     for (const status of ['failed', 'cancelled', 'interrupted'] as const) {
       const invoke = renderCard(status)

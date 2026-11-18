@@ -138,3 +138,11 @@ export async function addAgent(input: AgentConfig): Promise<AgentConfig> {
 export async function removeAgent(agentId: string): Promise<void> {
   await window.api.invoke(IPC.agentsRemove, { agentId })
 }
+
+/** 启用/停用成员。停用后不再向其分派任务，历史任务与消息保留。 */
+export async function setAgentEnabled(agentId: string, enabled: boolean): Promise<AgentConfig> {
+  return (await window.api.invoke(IPC.agentsUpdate, {
+    agentId,
+    patch: { enabled }
+  })) as AgentConfig
+}
