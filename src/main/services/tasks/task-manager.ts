@@ -18,12 +18,19 @@ import type { WorkspaceRepo } from '../../db/workspace-repo'
 import type { EventBus } from '../../events'
 import { AgentRunError } from '../agents/adapter'
 import type { AdapterFactory } from '../agents/adapter-factory'
+import { extractMentionIds } from '../chat/mentions'
 import type { GitService } from '../git/git'
 import { LogWriter } from './log-writer'
 import type { SetupRunner } from './setup-runner'
 
 /** 群里进度系统消息的节流间隔：每分钟最多一条，避免刷屏 */
 const PROGRESS_MESSAGE_INTERVAL_MS = 60_000
+
+/**
+ * 委派链的最大深度：用户直接分派的任务深度为 0，其委派任务为 1。
+ * 只允许创建深度不超过该值的任务，防止 Agent 之间无限链式委派。
+ */
+const MAX_DELEGATION_DEPTH = 3
 
 export interface TaskManagerDeps {
   tasks: TaskRepo
@@ -577,6 +584,16 @@ export class TaskManager {
     this.emitTask(task.id)
     this.addSystemMessage(task, terminalMessage(status, task.title, summary))
 
+    // 成功任务先处理 Agent 委派：委派只依赖摘要与 Agent 配置，放在合并回调之前，
+    // 让委派任务尽早入队。失败/取消不触发委派；委派异常只记录，不影响终态与合并。
+    if (status === 'done') {
+      try {
+        this.maybeDelegate(task, summary)
+      } catch (error) {
+        console.error(`委派任务失败：${task.id}`, error)
+      }
+    }
+
     // 成功任务交给合并协调器；回调失败只记录，不影响任务终态与 Agent 释放
     if (status === 'done' && this.onTaskDone !== undefined) {
       try {
@@ -590,6 +607,92 @@ export class TaskManager {
         console.error(`合并任务失败：${task.id}`, error)
       }
     }
+  }
+
+  /**
+   * 任务成功完成后检查并创建 Agent 委派任务。
+   *
+   * 仅当当前 Agent 开启 canDelegate 且摘要非空时处理。按摘要中的提及顺序取
+   * 第一个符合条件的 Agent：属于同一工作区、已启用、不是当前 Agent、不在
+   * 祖先链上；若多个提及都合格，v1 只为第一个创建任务，其余忽略。
+   *
+   * 深度按 parentTaskId 祖先数量计算：用户直接分派的任务为 0，其委派任务
+   * 为 1；新任务深度超过 3 时拒绝。祖先 Agent 集合用于阻断环，包括自己
+   * 提及自己与 A->B->A 的直接回环。
+   */
+  private maybeDelegate(task: Task, summary: string | null): void {
+    if (summary === null || summary === '') {
+      return
+    }
+    const agent = this.agents.get(task.agentId)
+    if (agent === null || !agent.canDelegate) {
+      return
+    }
+
+    // 一次遍历祖先链同时得到深度与祖先 Agent 集合；visited 防御脏数据中的环。
+    const ancestorAgentIds = new Set<string>()
+    const visited = new Set<string>([task.id])
+    let depth = 0
+    let parentId = task.parentTaskId
+    while (parentId !== null && !visited.has(parentId)) {
+      visited.add(parentId)
+      const parent = this.tasks.get(parentId)
+      // 父任务缺失（例如被清理）时只能按已找到的祖先计算深度
+      if (parent === null) {
+        break
+      }
+      ancestorAgentIds.add(parent.agentId)
+      depth += 1
+      parentId = parent.parentTaskId
+    }
+
+    // 新任务作为当前任务的子任务，深度在当前深度基础上加 1
+    if (depth + 1 > MAX_DELEGATION_DEPTH) {
+      return
+    }
+
+    // 只从当前工作区的 Agent 中匹配，保证目标与来源属于同一工作区
+    const candidates = this.agents.listByWorkspace(task.workspaceId)
+    const candidatesById = new Map(candidates.map((candidate) => [candidate.id, candidate]))
+    let target: AgentConfig | undefined
+    for (const id of extractMentionIds(summary, candidates)) {
+      const candidate = candidatesById.get(id)
+      if (
+        candidate !== undefined &&
+        candidate.enabled &&
+        candidate.id !== task.agentId &&
+        !ancestorAgentIds.has(candidate.id)
+      ) {
+        target = candidate
+        break
+      }
+    }
+    if (target === undefined) {
+      return
+    }
+
+    // 委派任务的 prompt 直接使用摘要原文，让目标 Agent 看到前序工作的完整结论
+    const delegated: Task = {
+      id: randomUUID(),
+      workspaceId: task.workspaceId,
+      agentId: target.id,
+      parentTaskId: task.id,
+      taskType: 'code',
+      title: `委派：${target.name}`,
+      prompt: summary,
+      branch: null,
+      worktreePath: null,
+      baseRef: null,
+      status: 'queued',
+      exitCode: null,
+      summary: null,
+      createdAt: this.now().toISOString(),
+      startedAt: null,
+      finishedAt: null
+    }
+    this.tasks.insert(delegated)
+    this.emitTask(delegated.id)
+    this.enqueue(delegated.id)
   }
 
   private emitTask(taskId: string): void {
