@@ -446,15 +446,17 @@ export class TaskManager {
     this.emitTask(task.id)
     this.addSystemMessage(task, terminalMessage(status, task.title, summary))
 
-    // 成功任务交给合并协调器；异步失败不能影响任务终态与 Agent 释放
+    // 成功任务交给合并协调器；回调失败只记录，不影响任务终态与 Agent 释放
     if (status === 'done' && this.onTaskDone !== undefined) {
       try {
         const pending: unknown = this.onTaskDone(task.id)
         if (pending instanceof Promise) {
-          void pending.catch(() => undefined)
+          void pending.catch((error: unknown) => {
+            console.error(`合并任务失败：${task.id}`, error)
+          })
         }
-      } catch {
-        // 合并通知本身失败不应影响任务已经写入的 done 状态
+      } catch (error) {
+        console.error(`合并任务失败：${task.id}`, error)
       }
     }
   }

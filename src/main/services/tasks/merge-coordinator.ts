@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import type { Task, Workspace } from '../../../shared/types'
+import type { Task, TaskStatus, Workspace } from '../../../shared/types'
 import type { AgentRepo } from '../../db/agent-repo'
 import type { TaskRepo } from '../../db/task-repo'
 import type { WorkspaceRepo } from '../../db/workspace-repo'
@@ -20,6 +20,20 @@ import type { EventBus } from '../../events'
 import type { GitService } from '../git/git'
 import { outOfScopeFiles } from '../git/path-scope'
 import type { SerialQueue } from '../git/serial-queue'
+
+/**
+ * 可以放弃的状态：任务已经不再由 Agent 执行，也没有正在进行的合并。
+ * queued/preparing/running 删除 worktree 会破坏运行中的现场；
+ * merging 的合并操作已经在队列中执行；merged 已经合入，不能回退成 abandoned。
+ */
+const ABANDONABLE_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>([
+  'done',
+  'awaiting_approval',
+  'conflict',
+  'failed',
+  'cancelled',
+  'interrupted'
+])
 
 export interface MergeCoordinatorDeps {
   queue: SerialQueue
@@ -61,7 +75,20 @@ export class MergeCoordinator {
       if (task.status !== 'done') {
         throw new Error(`只有已完成的任务可以合并：${taskId}`)
       }
-      await this.performMerge(task, false)
+
+      // 合并前的读取/校验失败（工作区或 Agent 记录缺失、worktree 不存在等）
+      // 不会进入 performMerge 内部的 git 错误处理；这里统一收敛为 failed，
+      // 避免任务永久停在 done 且 UI 收不到任何更新。
+      try {
+        await this.performMerge(task, false)
+      } catch (error) {
+        const workspace = this.workspaces.get(task.workspaceId)
+        if (workspace !== null) {
+          await this.abortMerge(this.integrationWorktreePath(workspace.id))
+        }
+        this.updateTask(task.id, { status: 'failed', summary: `合并失败：${errorMessage(error)}` })
+        this.emitTask(task.id)
+      }
     })
   }
 
@@ -111,6 +138,8 @@ export class MergeCoordinator {
     }
 
     this.tasks.insert(resolve)
+    // 先广播任务卡片，再入队调度，UI 不必等调度结果就能看到解决任务
+    this.emitTask(resolve.id)
     this.enqueue(resolve.id)
     return resolve
   }
@@ -166,6 +195,10 @@ export class MergeCoordinator {
   abandon(taskId: string): Promise<void> {
     return this.queue.run(async () => {
       const task = this.loadTask(taskId)
+      // 运行中或已合并的任务不能放弃：前者会破坏 Agent 现场，后者会回退已合入的状态
+      if (!ABANDONABLE_STATUSES.has(task.status)) {
+        throw new Error(`只有未合并的任务可以放弃：${taskId}`)
+      }
       const workspace = this.loadWorkspace(task)
       await this.removeWorktree(workspace, task)
       this.updateTask(task.id, { status: 'abandoned' })
@@ -192,7 +225,9 @@ export class MergeCoordinator {
       return
     }
 
-    if (!skipGates) {
+    // 解决任务的本职就是把 integration 合回自己的分支：baseRef 之后 integration
+    // 带入的其他任务改动不属于该 Agent 的越界修改，因此跳过自动合并与范围闸门。
+    if (!skipGates && task.taskType !== 'resolve') {
       if (!workspace.autoMerge) {
         this.updateTask(task.id, { status: 'awaiting_approval', summary: '需要确认合并' })
         this.emitTask(task.id)
@@ -248,6 +283,20 @@ export class MergeCoordinator {
     }
     this.updateTask(task.id, { status: 'merged' })
     this.emitTask(task.id)
+
+    // 解决任务合并成功后，父冲突任务不再需要保留冲突现场：
+    // 否则卡片会继续提供“打开 worktree / 标记已解决”，而目录已随解决任务删除。
+    if (task.taskType === 'resolve' && task.parentTaskId !== null) {
+      const parent = this.tasks.get(task.parentTaskId)
+      if (parent !== null) {
+        this.updateTask(parent.id, {
+          status: 'merged',
+          summary: '冲突已解决并合入',
+          worktreePath: null
+        })
+        this.emitTask(parent.id)
+      }
+    }
   }
 
   private async abortMerge(cwd: string): Promise<void> {

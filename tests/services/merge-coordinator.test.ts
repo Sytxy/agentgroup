@@ -353,8 +353,14 @@ describe('MergeCoordinator', () => {
     expect(resolve.prompt).toContain(INTEGRATION_BRANCH)
     expect(resolve.prompt).toContain('解决冲突')
     expect(resolve.prompt).toContain('提交')
-    // 落库并重新入队
+    // 落库、广播任务卡片并重新入队
     expect(tasks.get(resolve.id)).toEqual(resolve)
+    const resolveEvents = seen.filter(
+      (event): event is Extract<AppEvent, { type: 'task-updated' }> =>
+        event.type === 'task-updated' && event.task.id === resolve.id
+    )
+    expect(resolveEvents).toHaveLength(1)
+    expect(resolveEvents[0]?.task).toEqual(resolve)
     expect(enqueued).toEqual([resolve.id])
   })
 
@@ -428,10 +434,24 @@ describe('MergeCoordinator', () => {
     expect(message.trim()).toBe('resolve: Conflicting')
   })
 
+  test('abandon rejects running tasks and leaves the worktree intact', async () => {
+    insertAgent()
+    const task = await createDoneTask({ files: { 'FEATURE.md': 'feature\n' } })
+    tasks.update(task.id, { status: 'running' })
+
+    await expect(coordinator.abandon(task.id)).rejects.toThrow('只有未合并的任务可以放弃')
+
+    expect(tasks.get(task.id)?.status).toBe('running')
+    expect(existsSync(task.worktreePath as string)).toBe(true)
+  })
+
   test('abandon removes the worktree, marks abandoned and keeps the branch', async () => {
     insertAgent()
     const task = await createDoneTask({ files: { 'FEATURE.md': 'feature\n' } })
     await coordinator.mergeTask(task.id)
+    expect(tasks.get(task.id)?.status).toBe('merged')
+    // 已合入的任务不能被回退为 abandoned
+    await expect(coordinator.abandon(task.id)).rejects.toThrow('只有未合并的任务可以放弃')
     expect(tasks.get(task.id)?.status).toBe('merged')
 
     const abandoned = await createDoneTask({ files: { 'OTHER.md': 'other\n' } })
@@ -449,6 +469,25 @@ describe('MergeCoordinator', () => {
     tasks.update(task.id, { status: 'running' })
 
     await expect(coordinator.mergeTask(task.id)).rejects.toThrow('只有已完成的任务可以合并')
+  })
+
+  test('merge failure before git merge marks the task failed instead of leaving it done', async () => {
+    // Agent 记录被删除（或任务引用了不存在的 Agent）时，范围闸门读取 Agent 会失败
+    const task = await createDoneTask({
+      files: { 'FEATURE.md': 'feature\n' },
+      agentId: 'agent-deleted'
+    })
+
+    await coordinator.mergeTask(task.id)
+
+    const stored = tasks.get(task.id) as Task
+    expect(stored.status).toBe('failed')
+    expect(stored.summary).toBe('合并失败：任务所属 Agent 不存在：agent-deleted')
+    expect(recordStatuses(task.id).at(-1)).toBe('failed')
+    // 合并未执行，integration 不包含该任务改动
+    expect(existsSync(join(integrationPath(), 'FEATURE.md'))).toBe(false)
+    // 失败保留现场，便于排查
+    expect(existsSync(task.worktreePath as string)).toBe(true)
   })
 })
 
@@ -540,10 +579,49 @@ describe('TaskManager merge wiring', () => {
 
     await waitFor(() => tasks.get(resolve.id)?.status === 'merged')
 
-    expect(tasks.get(conflict.id)?.status).toBe('conflict')
+    // 父冲突任务一并收敛，不再保留已删除的 worktree 路径
+    const parent = tasks.get(conflict.id) as Task
+    expect(parent.status).toBe('merged')
+    expect(parent.summary).toBe('冲突已解决并合入')
+    expect(parent.worktreePath).toBeNull()
     expect(await readFile(join(integrationPath(), 'README.md'), 'utf8')).toBe(
       'resolved by agent\n'
     )
     expect(existsSync(conflict.worktreePath as string)).toBe(false)
+  })
+
+  test('resolve task with non-empty pathScope merges without awaiting approval', async () => {
+    insertAgent()
+    // 解决任务会带入其他任务合入 integration 的文件，不能按解决 Agent 的范围判断越界
+    insertAgent({ id: 'agent-resolver', name: 'resolver', pathScope: ['src/**'] })
+
+    const conflict = await createConflictTask()
+    const resolve = coordinator.createResolveTask(conflict.id, 'agent-resolver')
+
+    const adapter = new FakeAdapter({
+      steps: [
+        {
+          before: async (cwd) => {
+            await gitRun(cwd, ['merge', '--no-ff', INTEGRATION_BRANCH]).catch(() => undefined)
+            await writeFile(join(cwd, 'README.md'), 'resolved outside scope\n')
+          },
+          event: { type: 'final', summary: '冲突已解决' }
+        }
+      ]
+    })
+    const manager = createManager(adapter, {
+      onTaskDone: (taskId) => {
+        void coordinator.mergeTask(taskId)
+      }
+    })
+    manager.start()
+
+    await waitFor(() => tasks.get(resolve.id)?.status === 'merged')
+
+    expect(recordStatuses(resolve.id)).not.toContain('awaiting_approval')
+    expect(await readFile(join(integrationPath(), 'README.md'), 'utf8')).toBe(
+      'resolved outside scope\n'
+    )
+    expect(tasks.get(conflict.id)?.status).toBe('merged')
   })
 })
