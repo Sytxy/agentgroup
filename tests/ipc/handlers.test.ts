@@ -1,0 +1,295 @@
+// IPC 处理器测试：用假上下文验证参数转发与错误包装，不启动 Electron。
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { describe, expect, test, vi } from 'vitest'
+import type { ChatMessage, Task, Workspace } from '../../src/shared/types'
+import { IPC } from '../../src/shared/ipc'
+import { createAppContext, type AppContext } from '../../src/main/app-context'
+import { createIpcHandlers } from '../../src/main/ipc-handlers'
+import { EventBus } from '../../src/main/events'
+import { GitService } from '../../src/main/services/git/git'
+import { MergeCoordinator } from '../../src/main/services/tasks/merge-coordinator'
+import { TaskManager } from '../../src/main/services/tasks/task-manager'
+import { Dispatcher } from '../../src/main/services/chat/dispatcher'
+import { WorkspaceService } from '../../src/main/services/workspace-service'
+import { WASM_PATH } from '../helpers/db'
+
+const workspace: Workspace = {
+  id: 'w1',
+  name: 'demo',
+  repoPath: '/repo',
+  integrationBranch: 'agentgroup/integration',
+  targetBranch: 'main',
+  setupCommand: null,
+  setupCopy: [],
+  setupTimeoutMin: 10,
+  taskTimeoutMin: 60,
+  autoMerge: true,
+  autoTestAfterMerge: false,
+  testAgentId: null,
+  testTaskTemplate: '运行全部测试',
+  lastVerification: 'unknown',
+  createdAt: '2026-11-18T00:00:00.000Z'
+}
+
+const task: Task = {
+  id: 't1',
+  workspaceId: 'w1',
+  agentId: 'a1',
+  parentTaskId: null,
+  taskType: 'code',
+  title: '改代码',
+  prompt: '改代码',
+  branch: 'agent/t1',
+  worktreePath: '/tmp/worktrees/w1/t1',
+  baseRef: 'abc123',
+  status: 'queued',
+  exitCode: null,
+  summary: null,
+  createdAt: '2026-11-18T00:00:00.000Z',
+  startedAt: null,
+  finishedAt: null
+}
+
+const message: ChatMessage = {
+  id: 'm1',
+  workspaceId: 'w1',
+  kind: 'user',
+  authorType: 'user',
+  authorId: null,
+  content: 'hi',
+  taskId: null,
+  createdAt: '2026-11-18T00:00:00.000Z'
+}
+
+/** 只提供处理器会访问到的字段；未使用的服务字段用最小桩对象占位。 */
+function makeFakeContext() {
+  const workspaces = {
+    get: vi.fn(),
+    list: vi.fn(() => []),
+    insert: vi.fn(),
+    update: vi.fn()
+  }
+  const agents = {
+    get: vi.fn(),
+    listByWorkspace: vi.fn(() => []),
+    insert: vi.fn(),
+    update: vi.fn()
+  }
+  const tasks = {
+    get: vi.fn(),
+    listByWorkspace: vi.fn(() => []),
+    insert: vi.fn(),
+    update: vi.fn()
+  }
+  const messages = {
+    insert: vi.fn(),
+    listByWorkspace: vi.fn(() => [])
+  }
+  const events = { emit: vi.fn(), on: vi.fn() }
+  const workspaceService = {
+    create: vi.fn(),
+    list: vi.fn(() => []),
+    diffStat: vi.fn(),
+    integrationWorktreePath: vi.fn()
+  }
+  const taskManager = {
+    cancel: vi.fn(),
+    retry: vi.fn(),
+    approveMerge: vi.fn(),
+    abandon: vi.fn(),
+    enqueue: vi.fn(),
+    start: vi.fn(),
+    recoverInterrupted: vi.fn()
+  }
+  const mergeCoordinator = {
+    mergeTask: vi.fn(),
+    approve: vi.fn(),
+    abandon: vi.fn(),
+    createResolveTask: vi.fn(),
+    prepareResolveWorktree: vi.fn(),
+    markManuallyResolved: vi.fn()
+  }
+  const dispatcher = { send: vi.fn() }
+  const openPath = vi.fn(async () => {})
+
+  const ctx = {
+    db: {},
+    workspaces,
+    agents,
+    tasks,
+    messages,
+    events,
+    git: {},
+    workspaceService,
+    taskManager,
+    mergeCoordinator,
+    dispatcher,
+    worktreesRoot: '/tmp/worktrees',
+    logsRoot: '/tmp/logs',
+    openPath
+  } as unknown as AppContext
+
+  return {
+    ctx,
+    workspaces,
+    agents,
+    tasks,
+    messages,
+    events,
+    workspaceService,
+    taskManager,
+    mergeCoordinator,
+    dispatcher,
+    openPath
+  }
+}
+
+describe('createIpcHandlers', () => {
+  test('chat:send delegates to Dispatcher and returns created tasks', async () => {
+    const { ctx, dispatcher } = makeFakeContext()
+    dispatcher.send.mockResolvedValue({ message, tasks: [task] })
+    const handlers = createIpcHandlers(ctx)
+
+    const result = await handlers[IPC.chatSend]!({ workspaceId: 'w1', text: 'hi @a1' })
+
+    expect(dispatcher.send).toHaveBeenCalledWith('w1', 'hi @a1')
+    expect(result).toEqual({ message, tasks: [task] })
+  })
+
+  test('tasks:cancel delegates to TaskManager', async () => {
+    const { ctx, taskManager } = makeFakeContext()
+    const handlers = createIpcHandlers(ctx)
+
+    await handlers[IPC.tasksCancel]!({ taskId: 't1' })
+
+    expect(taskManager.cancel).toHaveBeenCalledWith('t1')
+  })
+
+  test('workspace:create returns the workspace', async () => {
+    const { ctx, workspaceService } = makeFakeContext()
+    workspaceService.create.mockResolvedValue(workspace)
+    const handlers = createIpcHandlers(ctx)
+
+    const result = await handlers[IPC.workspaceCreate]!({
+      name: 'demo',
+      repoPath: '/repo',
+      targetBranch: 'main'
+    })
+
+    expect(workspaceService.create).toHaveBeenCalledWith({
+      name: 'demo',
+      repoPath: '/repo',
+      targetBranch: 'main'
+    })
+    expect(result).toBe(workspace)
+  })
+
+  test('unknown channel rejects with a readable error', async () => {
+    const { ctx } = makeFakeContext()
+    const handlers = createIpcHandlers(ctx)
+
+    await expect(handlers['not:a-channel']!(undefined)).rejects.toThrow(
+      /未知 IPC 通道：not:a-channel/
+    )
+  })
+
+  test('tasks:create-resolve inserts a task-card message and emits it', async () => {
+    const { ctx, mergeCoordinator, messages, events } = makeFakeContext()
+    const resolveTask: Task = {
+      ...task,
+      id: 't2',
+      parentTaskId: 't1',
+      taskType: 'resolve',
+      title: '解决冲突：改代码'
+    }
+    mergeCoordinator.createResolveTask.mockReturnValue(resolveTask)
+    const handlers = createIpcHandlers(ctx)
+
+    const result = await handlers[IPC.tasksCreateResolve]!({ taskId: 't1', agentId: 'a1' })
+
+    expect(mergeCoordinator.createResolveTask).toHaveBeenCalledWith('t1', 'a1')
+    expect(result).toBe(resolveTask)
+    expect(messages.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: 'w1',
+        kind: 'task-card',
+        authorType: 'system',
+        authorId: null,
+        content: resolveTask.title,
+        taskId: 't2'
+      })
+    )
+    expect(events.emit).toHaveBeenCalledWith({
+      type: 'message',
+      message: expect.objectContaining({ kind: 'task-card', taskId: 't2' })
+    })
+  })
+
+  test('tasks:open-worktree calls the injected openPath', async () => {
+    const { ctx, tasks, openPath } = makeFakeContext()
+    tasks.get.mockReturnValue(task)
+    const handlers = createIpcHandlers(ctx)
+
+    const result = await handlers[IPC.tasksOpenWorktree]!({ taskId: 't1' })
+
+    expect(openPath).toHaveBeenCalledWith('/tmp/worktrees/w1/t1')
+    expect(result).toBe('/tmp/worktrees/w1/t1')
+  })
+
+  test('tasks:open-worktree rejects when the task has no worktree', async () => {
+    const { ctx, tasks, openPath } = makeFakeContext()
+    tasks.get.mockReturnValue({ ...task, worktreePath: null })
+    const handlers = createIpcHandlers(ctx)
+
+    await expect(handlers[IPC.tasksOpenWorktree]!({ taskId: 't1' })).rejects.toThrow(
+      /没有可打开的 worktree/
+    )
+    expect(openPath).not.toHaveBeenCalled()
+  })
+
+  test('service errors are wrapped with the channel name', async () => {
+    const { ctx, taskManager } = makeFakeContext()
+    taskManager.cancel.mockRejectedValue(new Error('任务不存在：t1'))
+    const handlers = createIpcHandlers(ctx)
+
+    await expect(handlers[IPC.tasksCancel]!({ taskId: 't1' })).rejects.toThrow(
+      `${IPC.tasksCancel} 失败：任务不存在：t1`
+    )
+  })
+
+  test('every declared IPC channel has a handler', () => {
+    const { ctx } = makeFakeContext()
+    const handlers = createIpcHandlers(ctx)
+
+    // 用自有键检查：Proxy 会为任意字符串返回“未知通道”处理器，
+    // 直接取 handlers[channel] 无法证明通道真的被注册。
+    expect(Object.keys(handlers).sort()).toEqual([...Object.values(IPC)].sort())
+  })
+})
+
+describe('createAppContext', () => {
+  test('assembles all services from injected paths without Electron', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'agentgroup-ctx-'))
+    const ctx = await createAppContext({
+      dbPath: path.join(dir, 'agentgroup.db'),
+      wasmPath: WASM_PATH,
+      worktreesRoot: path.join(dir, 'worktrees'),
+      logsRoot: path.join(dir, 'logs'),
+      openPath: async () => {}
+    })
+
+    try {
+      expect(ctx.events).toBeInstanceOf(EventBus)
+      expect(ctx.git).toBeInstanceOf(GitService)
+      expect(ctx.workspaceService).toBeInstanceOf(WorkspaceService)
+      expect(ctx.taskManager).toBeInstanceOf(TaskManager)
+      expect(ctx.mergeCoordinator).toBeInstanceOf(MergeCoordinator)
+      expect(ctx.dispatcher).toBeInstanceOf(Dispatcher)
+    } finally {
+      ctx.db.close()
+      await fs.rm(dir, { recursive: true, force: true })
+    }
+  })
+})
