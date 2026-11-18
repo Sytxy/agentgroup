@@ -96,6 +96,32 @@ describe('消息输入框', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 
+  test('Enter during IME composition is ignored, then Enter after composition sends', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined)
+    render(<Composer agents={[agent('a1', 'claude')]} onSend={onSend} />)
+    const input = screen.getByRole('textbox', { name: '消息输入' })
+
+    // 组字中按 Enter 只应提交候选词：既不选中补全，也不发送
+    fireEvent.change(input, { target: { value: '@cl' } })
+    expect(screen.getByRole('option', { name: 'claude' })).toBeInTheDocument()
+    fireEvent.compositionStart(input)
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(input).toHaveValue('@cl')
+
+    // 部分浏览器组字期间只上报 keyCode 229
+    fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 })
+    expect(onSend).not.toHaveBeenCalled()
+    expect(input).toHaveValue('@cl')
+
+    // 组字结束后正常 Enter 发送
+    fireEvent.change(input, { target: { value: '你好' } })
+    fireEvent.compositionEnd(input)
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('你好'))
+  })
+
   test('Shift+Enter does not send', () => {
     const onSend = vi.fn().mockResolvedValue(undefined)
     render(<Composer agents={[]} onSend={onSend} />)

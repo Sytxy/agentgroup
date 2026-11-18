@@ -104,6 +104,13 @@ export default function Composer({
   }
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>): void => {
+    // 中文等输入法用 Enter 提交候选词时也会触发 keydown（isComposing / keyCode 229）。
+    // 此时必须放行给输入法，否则会把未完成的拼音当作正文发送，甚至按半成品
+    // 文本里的 @ 提及分派任务、启动 Agent。两种 Enter 行为都要跳过。
+    if (event.nativeEvent.isComposing || event.keyCode === 229) {
+      return
+    }
+
     if (showSuggestions) {
       if (event.key === 'ArrowDown') {
         event.preventDefault()
