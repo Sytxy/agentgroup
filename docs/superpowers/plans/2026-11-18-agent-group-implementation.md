@@ -645,7 +645,7 @@ Run: `git add src tests && git commit -m "feat: merge coordinator with conflict 
 
 **Interfaces:**
 - Consumes: `TaskRepo`、`EventBus`
-- Produces: `TaskManager.recoverInterrupted(): void`；`TaskManager.retry(taskId): Promise<void>`（`interrupted`/`failed`/`cancelled` 可重试）
+- Produces: `TaskManager.recoverInterrupted(): void`；`TaskManager.retry(taskId): Promise<void>`（`interrupted`/`failed`/`cancelled` 可重试）；恢复时对 `done` 且尚未合并的任务重新调用 `onTaskDone`（若已配置），让重启后补上合并
 
 - [ ] **Step 1: 写失败测试**
 
@@ -654,6 +654,7 @@ test('startup marks preparing/running/merging tasks as interrupted', ...)
 test('interrupted tasks are not dispatched automatically', ...)
 test('retry resets a task to queued with a fresh branch and worktree', ...)
 test('retry on a non-retryable status rejects', ...)
+test('recovery re-drives the merge callback for done tasks', ...)
 ```
 
 - [ ] **Step 2: 运行确认失败**
@@ -769,7 +770,7 @@ Run: `git add src tests && git commit -m "feat: add bounded agent delegation"`
 **Interfaces:**
 - Consumes: 所有服务
 - Produces:
-  - `IPC` 通道常量：`workspace:create|list|update|diff`、`agents:list|add|update|remove`、`chat:send|history`、`tasks:list|cancel|retry|approve-merge|abandon|open-worktree|prepare-resolve|mark-resolved|log`、`events`（主→渲染）
+  - `IPC` 通道常量：`workspace:create|list|update|diff`、`agents:list|add|update|remove`、`chat:send|history`、`tasks:list|cancel|retry|approve-merge|abandon|open-worktree|prepare-resolve|mark-resolved|create-resolve|log`、`events`（主→渲染）
   - `createIpcHandlers(ctx: AppContext): Record<string, (payload: unknown) => Promise<unknown>>`；`AppContext` 包含 `openPath: (p: string) => Promise<void>`（生产环境接 Electron `shell.openPath`，测试注入假实现）
   - preload 暴露 `window.api`：`invoke(channel, payload)` 与 `onEvent(cb)`
 
@@ -811,7 +812,7 @@ Run: `git add src tests && git commit -m "feat: typed ipc bridge between main an
 
 **Interfaces:**
 - Consumes: `window.api`（Task 16）
-- Produces: 应用外壳（左侧工作区列表、中间占位、右侧占位）；`WorkspaceSetup` 表单（名称、仓库路径、目标分支）；创建成功后刷新列表。
+- Produces: 应用外壳（左侧工作区列表、中间占位、右侧占位）；顶部显示工作区名、仓库路径、integration 分支名与相对目标分支的 diff 统计；`WorkspaceSetup` 表单（名称、仓库路径、目标分支）；创建成功后刷新列表。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -891,7 +892,7 @@ Run: `git add src tests && git commit -m "feat: chat timeline and composer with 
 
 **Interfaces:**
 - Consumes: `window.api`、`Task`、`AgentConfig`
-- Produces: 任务卡片（状态、耗时、最近进度、展开日志、取消/重试/合并确认/放弃/打开 worktree）；成员面板（状态点、添加/停用）；设置对话框（autoMerge、autoTestAfterMerge、testAgent、setup 命令/复制、目标分支）；`notifyTaskFinished(task)` 在 merged/failed/conflict 时弹 macOS 通知。
+- Produces: 任务卡片（状态、耗时、最近进度、展开日志、取消/重试/合并确认/放弃/打开 worktree）；成员面板（状态点、添加/停用）；顶部显示 `lastVerification` 与"复制合入命令"按钮（`git merge agentgroup/integration`）；设置对话框（autoMerge、autoTestAfterMerge、testAgent、setup 命令/复制、目标分支）；`notifyTaskFinished(task)` 在 merged/failed/conflict 时弹 macOS 通知。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -899,6 +900,7 @@ Run: `git add src tests && git commit -m "feat: chat timeline and composer with 
 test('task card shows status-specific actions for conflict and awaiting_approval', ...)
 test('add agent dialog warns for edit-and-run profile', ...)
 test('notification helper fires for failed and merged only', ...)
+test('header shows lastVerification and copies the integration merge command', ...)
 ```
 
 - [ ] **Step 2: 运行确认失败**

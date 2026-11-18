@@ -1,0 +1,21 @@
+appId: com.local.agentgroup
+productName: AgentGroup
+directories:
+  buildResources: build
+  output: dist
+files:
+  - out/**/*
+  - package.json
+extraResources:
+  # sql.js 在运行时按路径加载 wasm，asar 内的文件无法直接读取，复制到 resources 根目录。
+  - from: node_modules/sql.js/dist/sql-wasm.wasm
+    to: sql-wasm.wasm
+# node-pty 的原生模块（pty.node、spawn-helper）必须解包出 asar 才能被加载和执行。
+asarUnpack:
+  - node_modules/node-pty/**
+mac:
+  category: public.app-category.developer-tools
+  target:
+    - dmg
+  # 个人本地构建不做签名/公证，避免没有开发者证书时打包失败。
+  identity: null

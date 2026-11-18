@@ -1,0 +1,6 @@
+{"type":"system","subtype":"init","session_id":"session-1","tools":["Read","Bash"]}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"src/index.ts"}}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"  hello from claude  "}]}}
+{"type":"result","subtype":"success","result":"All done","is_error":false}
+{"type":"unknown_event","payload":{"value":1}}
+not json at all
