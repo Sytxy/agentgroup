@@ -1,4 +1,5 @@
 // IPC 处理器测试：用假上下文验证参数转发与错误包装，不启动 Electron。
+import { existsSync } from 'node:fs'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -16,6 +17,7 @@ import { TaskManager } from '../../src/main/services/tasks/task-manager'
 import { Dispatcher } from '../../src/main/services/chat/dispatcher'
 import { WorkspaceService } from '../../src/main/services/workspace-service'
 import { createTestDb, WASM_PATH } from '../helpers/db'
+import { createTempRepo } from '../helpers/temp-repo'
 
 const workspace: Workspace = {
   id: 'w1',
@@ -105,6 +107,7 @@ function makeFakeContext() {
     listByWorkspace: vi.fn(() => [])
   }
   const events = { emit: vi.fn(), on: vi.fn() }
+  const git = { branchExists: vi.fn() }
   const workspaceService = {
     create: vi.fn(),
     list: vi.fn(() => []),
@@ -138,7 +141,7 @@ function makeFakeContext() {
     tasks,
     messages,
     events,
-    git: {},
+    git,
     workspaceService,
     taskManager,
     mergeCoordinator,
@@ -155,6 +158,7 @@ function makeFakeContext() {
     tasks,
     messages,
     events,
+    git,
     workspaceService,
     taskManager,
     mergeCoordinator,
@@ -261,7 +265,38 @@ describe('createIpcHandlers', () => {
     )
   })
 
-  test('tasks:create-resolve inserts a task-card message and emits it', async () => {
+  test('workspace:update validates a non-null target branch', async () => {
+    const { ctx, workspaces, git } = makeFakeContext()
+    workspaces.get.mockReturnValue(workspace)
+    const handlers = createIpcHandlers(ctx)
+
+    git.branchExists.mockResolvedValue(false)
+    await expect(
+      handlers[IPC.workspaceUpdate]!({
+        workspaceId: 'w1',
+        patch: { targetBranch: 'gone' }
+      })
+    ).rejects.toThrow(`${IPC.workspaceUpdate} 失败：目标分支不存在：gone`)
+    expect(workspaces.update).not.toHaveBeenCalled()
+
+    // 显式置空表示不再比较，不需要校验分支
+    await handlers[IPC.workspaceUpdate]!({
+      workspaceId: 'w1',
+      patch: { targetBranch: null }
+    })
+    expect(workspaces.update).toHaveBeenCalledWith('w1', { targetBranch: null })
+    expect(git.branchExists).toHaveBeenCalledTimes(1)
+
+    git.branchExists.mockResolvedValue(true)
+    await handlers[IPC.workspaceUpdate]!({
+      workspaceId: 'w1',
+      patch: { targetBranch: 'main' }
+    })
+    expect(git.branchExists).toHaveBeenCalledWith('/repo', 'main')
+    expect(workspaces.update).toHaveBeenCalledWith('w1', { targetBranch: 'main' })
+  })
+
+  test('tasks:create-resolve delegates and leaves task-card creation to the factory', async () => {
     const { ctx, mergeCoordinator, messages, events } = makeFakeContext()
     const resolveTask: Task = {
       ...task,
@@ -277,20 +312,9 @@ describe('createIpcHandlers', () => {
 
     expect(mergeCoordinator.createResolveTask).toHaveBeenCalledWith('t1', 'a1')
     expect(result).toBe(resolveTask)
-    expect(messages.insert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        workspaceId: 'w1',
-        kind: 'task-card',
-        authorType: 'system',
-        authorId: null,
-        content: resolveTask.title,
-        taskId: 't2'
-      })
-    )
-    expect(events.emit).toHaveBeenCalledWith({
-      type: 'message',
-      message: expect.objectContaining({ kind: 'task-card', taskId: 't2' })
-    })
+    // 卡片消息由 TaskFactory 在协调器内部写入，IPC 层不再重复插入
+    expect(messages.insert).not.toHaveBeenCalled()
+    expect(events.emit).not.toHaveBeenCalled()
   })
 
   test('tasks:open-worktree calls the injected openPath', async () => {
@@ -355,6 +379,44 @@ describe('createAppContext', () => {
       expect(ctx.dispatcher).toBeInstanceOf(Dispatcher)
     } finally {
       ctx.db.close()
+      await fs.rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('startup recreates a missing integration worktree', async () => {
+    const repo = await createTempRepo()
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'agentgroup-ctx-heal-'))
+    const deps = {
+      dbPath: path.join(dir, 'agentgroup.db'),
+      wasmPath: WASM_PATH,
+      worktreesRoot: path.join(dir, 'worktrees'),
+      logsRoot: path.join(dir, 'logs'),
+      openPath: async () => {}
+    }
+
+    const first = await createAppContext(deps)
+    let worktreePath = ''
+    try {
+      const workspace = await first.workspaceService.create({
+        name: 'Demo',
+        repoPath: repo.path
+      })
+      worktreePath = first.workspaceService.integrationWorktreePath(workspace.id)
+      expect(existsSync(worktreePath)).toBe(true)
+    } finally {
+      first.db.close()
+    }
+
+    // 模拟数据目录被移动/删除：数据库记录还在，worktree 目录已消失
+    await fs.rm(worktreePath, { recursive: true, force: true })
+    expect(existsSync(worktreePath)).toBe(false)
+
+    const second = await createAppContext(deps)
+    try {
+      expect(existsSync(worktreePath)).toBe(true)
+    } finally {
+      second.db.close()
+      await repo.cleanup()
       await fs.rm(dir, { recursive: true, force: true })
     }
   })

@@ -2,15 +2,16 @@ import { randomUUID } from 'node:crypto'
 import type { ChatMessage, Task } from '../../../shared/types'
 import type { AgentRepo } from '../../db/agent-repo'
 import type { MessageRepo } from '../../db/message-repo'
-import type { TaskRepo } from '../../db/task-repo'
 import type { EventBus } from '../../events'
+import type { TaskFactory } from '../tasks/task-factory'
 import { MessageParser } from './message-parser'
 
 export interface DispatcherDeps {
   agents: AgentRepo
-  tasks: TaskRepo
   messages: MessageRepo
   events: EventBus
+  /** 统一创建任务 + task-card 消息，保证群聊里每个任务都有卡片 */
+  factory: TaskFactory
   /** 任务创建后交给 TaskManager 入队；分派器本身不启动任务。 */
   enqueue: (taskId: string) => void
   newId?: () => string
@@ -33,18 +34,18 @@ export interface DispatchResult {
  */
 export class Dispatcher {
   private readonly agents: AgentRepo
-  private readonly tasks: TaskRepo
   private readonly messages: MessageRepo
   private readonly events: EventBus
+  private readonly factory: TaskFactory
   private readonly enqueue: (taskId: string) => void
   private readonly newId: () => string
   private readonly now: () => Date
 
   constructor(deps: DispatcherDeps) {
     this.agents = deps.agents
-    this.tasks = deps.tasks
     this.messages = deps.messages
     this.events = deps.events
+    this.factory = deps.factory
     this.enqueue = deps.enqueue
     this.newId = deps.newId ?? (() => randomUUID())
     this.now = deps.now ?? (() => new Date())
@@ -114,36 +115,18 @@ export class Dispatcher {
       // 标题按 Unicode 码点截断，避免把 emoji 等代理对截成半个字符。
       const title = Array.from(prompt).slice(0, 40).join('')
 
-      const task: Task = {
-        id: this.newId(),
+      // 先只落库任务与卡片消息，等系统分派消息也写入后再统一入队，
+      // 避免任务启动产生的系统消息插到“已分派”之前。
+      const task = this.factory.create({
         workspaceId,
         agentId: agent.id,
         parentTaskId: null,
         taskType: 'code',
         title,
         prompt,
-        branch: null,
-        worktreePath: null,
-        baseRef: null,
-        status: 'queued',
-        exitCode: null,
-        summary: null,
-        createdAt,
-        startedAt: null,
-        finishedAt: null
-      }
-      this.tasks.insert(task)
-      createdTasks.push(task)
-      this.events.emit({ type: 'task-updated', task })
-
-      // 每个任务对应一张卡片消息，群聊据此渲染任务状态。
-      insertMessage({
-        kind: 'task-card',
-        authorType: 'system',
-        authorId: null,
-        content: title,
-        taskId: task.id
+        deferEnqueue: true
       })
+      createdTasks.push(task)
     }
 
     insertMessage({

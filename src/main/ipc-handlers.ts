@@ -4,13 +4,11 @@
  * 只负责参数校验、错误包装与把调用转发给应用服务；业务逻辑都在服务层。
  * 本文件不依赖 Electron，主进程注册 ipcMain.handle 时逐项绑定。
  */
-import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { IPC } from '../shared/ipc'
 import type {
   AgentConfig,
-  ChatMessage,
   PermissionProfile,
   Task,
   Workspace
@@ -80,8 +78,16 @@ export function createIpcHandlers(ctx: AppContext): Record<string, IpcHandler> {
   define(IPC.workspaceUpdate, async (payload) => {
     const input = record(payload)
     const workspaceId = requiredString(input, 'workspaceId')
-    requireWorkspace(workspaceId)
-    ctx.workspaces.update(workspaceId, workspaceSettingsPatch(input['patch']))
+    const workspace = requireWorkspace(workspaceId)
+    const patch = workspaceSettingsPatch(input['patch'])
+    // 目标分支只用于顶部差异统计；写入不存在的分支会让后续每次 diff 都失败，
+    // 因此保存前先校验。显式 null 表示不再比较，无需校验。
+    if (patch.targetBranch !== undefined && patch.targetBranch !== null) {
+      if (!(await ctx.git.branchExists(workspace.repoPath, patch.targetBranch))) {
+        throw new Error(`目标分支不存在：${patch.targetBranch}`)
+      }
+    }
+    ctx.workspaces.update(workspaceId, patch)
     return ctx.workspaces.get(workspaceId)
   })
 
@@ -173,25 +179,12 @@ export function createIpcHandlers(ctx: AppContext): Record<string, IpcHandler> {
 
   define(IPC.tasksCreateResolve, (payload) => {
     const input = record(payload)
-    const resolveTask = ctx.mergeCoordinator.createResolveTask(
+    // MergeCoordinator 通过 TaskFactory 创建任务，任务卡片消息与 task-updated
+    // 事件都由工厂统一写入，这里不再手工补消息。
+    return ctx.mergeCoordinator.createResolveTask(
       requiredString(input, 'taskId'),
       requiredString(input, 'agentId')
     )
-    // 解决任务由 IPC 触发（而非 Dispatcher），这里补一条任务卡片消息，
-    // 让群聊时间线与普通分派任务保持一致，并通知所有窗口刷新。
-    const message: ChatMessage = {
-      id: randomUUID(),
-      workspaceId: resolveTask.workspaceId,
-      kind: 'task-card',
-      authorType: 'system',
-      authorId: null,
-      content: resolveTask.title,
-      taskId: resolveTask.id,
-      createdAt: new Date().toISOString()
-    }
-    ctx.messages.insert(message)
-    ctx.events.emit({ type: 'message', message })
-    return resolveTask
   })
 
   define(IPC.tasksLog, async (payload) => {

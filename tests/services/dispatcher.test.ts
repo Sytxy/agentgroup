@@ -4,6 +4,7 @@ import { MessageRepo } from '../../src/main/db/message-repo'
 import { TaskRepo } from '../../src/main/db/task-repo'
 import { EventBus } from '../../src/main/events'
 import { Dispatcher } from '../../src/main/services/chat/dispatcher'
+import { TaskFactory } from '../../src/main/services/tasks/task-factory'
 import type { AgentConfig, AppEvent, ChatMessage } from '../../src/shared/types'
 import { createTestDb, type TestDb } from '../helpers/db'
 
@@ -50,14 +51,17 @@ function makeAgent(
 }
 
 function createDispatcher(): Dispatcher {
+  const newId = (): string => `id-${++idCounter}`
+  const now = (): Date => NOW
+  const factory = new TaskFactory({ tasks, messages, events, enqueue, newId, now })
   return new Dispatcher({
     agents,
-    tasks,
     messages,
     events,
+    factory,
     enqueue,
-    newId: () => `id-${++idCounter}`,
-    now: () => NOW
+    newId,
+    now
   })
 }
 

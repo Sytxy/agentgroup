@@ -16,6 +16,7 @@ import { GitService } from './services/git/git'
 import { SerialQueue } from './services/git/serial-queue'
 import { MergeCoordinator } from './services/tasks/merge-coordinator'
 import { SetupRunner } from './services/tasks/setup-runner'
+import { TaskFactory } from './services/tasks/task-factory'
 import { TaskManager } from './services/tasks/task-manager'
 import { WorkspaceService } from './services/workspace-service'
 
@@ -76,7 +77,16 @@ export async function createAppContext(deps: AppContextDeps): Promise<AppContext
     return mergeCoordinator
   }
 
-  const taskManager = new TaskManager({
+  // 任务工厂同样需要 TaskManager 入队；用闭包延迟读取，构造期不会触发调度。
+  let taskManager!: TaskManager
+  const taskFactory = new TaskFactory({
+    tasks,
+    messages,
+    events,
+    enqueue: (taskId) => taskManager.enqueue(taskId)
+  })
+
+  taskManager = new TaskManager({
     tasks,
     agents,
     workspaces,
@@ -85,6 +95,7 @@ export async function createAppContext(deps: AppContextDeps): Promise<AppContext
     setup: new SetupRunner(),
     adapters: new DefaultAdapterFactory(),
     events,
+    factory: taskFactory,
     worktreesRoot: deps.worktreesRoot,
     logsRoot: deps.logsRoot,
     onTaskDone: (taskId) => coordinator().mergeTask(taskId),
@@ -100,17 +111,27 @@ export async function createAppContext(deps: AppContextDeps): Promise<AppContext
     agents,
     workspaces,
     events,
-    enqueue: (taskId) => taskManager.enqueue(taskId),
+    factory: taskFactory,
     integrationWorktreePath: (workspaceId) => workspaceService.integrationWorktreePath(workspaceId)
   })
 
   const dispatcher = new Dispatcher({
     agents,
-    tasks,
     messages,
     events,
+    factory: taskFactory,
     enqueue: (taskId) => taskManager.enqueue(taskId)
   })
+
+  // 启动时自愈缺失的 integration worktree（用户可能移动/删除过 App 数据目录）。
+  // 单个工作区失败只记录日志：其余工作区仍可正常使用，失败原因在下次合并时还会暴露。
+  for (const workspace of workspaces.list()) {
+    try {
+      await workspaceService.ensureIntegrationWorktree(workspace)
+    } catch (error) {
+      console.error(`恢复工作区 ${workspace.id} 的集成 worktree 失败`, error)
+    }
+  }
 
   return {
     db,
