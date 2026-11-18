@@ -1,0 +1,441 @@
+/**
+ * 任务编排核心。
+ *
+ * 调度器按 createdAt 顺序挑选排队任务，但同一 Agent 同一时间只运行一个任务。
+ * 每个任务在真正启动时创建独立 worktree（基于当时的 integration 提交），
+ * 执行环境准备后运行 Agent 适配器，把输出写日志、进度实时推给任务卡片，
+ * 结束后提交改动并进入 done/failed/cancelled 之一。合并与 worktree 清理由 Task 12 负责。
+ */
+import { randomUUID } from 'node:crypto'
+import { mkdir } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import type { AgentConfig, ChatMessage, Task, TaskStatus } from '../../../shared/types'
+import type { AgentRepo } from '../../db/agent-repo'
+import type { MessageRepo } from '../../db/message-repo'
+import type { TaskRepo } from '../../db/task-repo'
+import type { WorkspaceRepo } from '../../db/workspace-repo'
+import type { EventBus } from '../../events'
+import { AgentRunError } from '../agents/adapter'
+import type { AdapterFactory } from '../agents/adapter-factory'
+import type { GitService } from '../git/git'
+import { LogWriter } from './log-writer'
+import type { SetupRunner } from './setup-runner'
+
+/** 群里进度系统消息的节流间隔：每分钟最多一条，避免刷屏 */
+const PROGRESS_MESSAGE_INTERVAL_MS = 60_000
+
+export interface TaskManagerDeps {
+  tasks: TaskRepo
+  agents: AgentRepo
+  workspaces: WorkspaceRepo
+  messages: MessageRepo
+  git: GitService
+  setup: SetupRunner
+  adapters: AdapterFactory
+  events: EventBus
+  worktreesRoot: string
+  logsRoot: string
+  now?: () => Date
+}
+
+interface RunningTask {
+  controller: AbortController
+  /** 任务运行结束（无论成败）时 resolve，供 cancel 等待 */
+  done: Promise<void>
+}
+
+export class TaskManager {
+  private readonly tasks: TaskRepo
+  private readonly agents: AgentRepo
+  private readonly workspaces: WorkspaceRepo
+  private readonly messages: MessageRepo
+  private readonly git: GitService
+  private readonly setup: SetupRunner
+  private readonly adapters: AdapterFactory
+  private readonly events: EventBus
+  private readonly worktreesRoot: string
+  private readonly logsRoot: string
+  private readonly now: () => Date
+
+  /** 正在运行的任务，value 持有取消信号与完成 Promise */
+  private readonly running = new Map<string, RunningTask>()
+  /** Agent 占用表：agentId -> 正在执行的任务 id */
+  private readonly busyAgents = new Map<string, string>()
+  /** 用户主动取消的任务；与超时区分，决定终态是 cancelled 还是 failed */
+  private readonly cancelRequested = new Set<string>()
+
+  constructor(deps: TaskManagerDeps) {
+    this.tasks = deps.tasks
+    this.agents = deps.agents
+    this.workspaces = deps.workspaces
+    this.messages = deps.messages
+    this.git = deps.git
+    this.setup = deps.setup
+    this.adapters = deps.adapters
+    this.events = deps.events
+    this.worktreesRoot = deps.worktreesRoot
+    this.logsRoot = deps.logsRoot
+    this.now = deps.now ?? (() => new Date())
+  }
+
+  /** 启动调度：应用启动时调用一次，接管数据库中已存在的排队任务 */
+  start(): void {
+    this.schedule()
+  }
+
+  /** 新任务落库后触发调度；队列顺序始终以数据库中的 createdAt 为准 */
+  enqueue(taskId: string): void {
+    if (this.tasks.get(taskId) === null) {
+      return
+    }
+    this.schedule()
+  }
+
+  /**
+   * 取消任务。运行中：标记用户取消并中止适配器，等待运行收尾后返回；
+   * 仍在排队：直接置为 cancelled 并回群通知。已进入终态的任务不做处理。
+   */
+  async cancel(taskId: string): Promise<void> {
+    const task = this.tasks.get(taskId)
+    if (task === null) {
+      throw new Error(`任务不存在：${taskId}`)
+    }
+
+    const running = this.running.get(taskId)
+    if (running !== undefined) {
+      this.cancelRequested.add(taskId)
+      running.controller.abort()
+      await running.done
+      return
+    }
+
+    if (task.status === 'queued') {
+      this.tasks.update(taskId, {
+        status: 'cancelled',
+        summary: '任务已取消',
+        finishedAt: this.now().toISOString()
+      })
+      this.emitTask(taskId)
+      this.addSystemMessage(task, `任务已取消：${task.title}`)
+    }
+  }
+
+  /**
+   * 重试任务。Task 11 仅做最小重置（状态回到 queued 并重新排队）；
+   * 旧分支/worktree 的清理与可重试状态校验在 Task 13 补齐。
+   */
+  async retry(taskId: string): Promise<void> {
+    const task = this.tasks.get(taskId)
+    if (task === null) {
+      throw new Error(`任务不存在：${taskId}`)
+    }
+
+    this.tasks.update(taskId, {
+      status: 'queued',
+      exitCode: null,
+      summary: null,
+      startedAt: null,
+      finishedAt: null
+    })
+    this.emitTask(taskId)
+    this.schedule()
+  }
+
+  /** 收集所有工作区的排队任务并按 createdAt 正序排列 */
+  private collectQueued(): Task[] {
+    const queued: Task[] = []
+    for (const workspace of this.workspaces.list()) {
+      for (const task of this.tasks.listByWorkspace(workspace.id)) {
+        if (task.status === 'queued') {
+          queued.push(task)
+        }
+      }
+    }
+
+    queued.sort((a, b) => {
+      if (a.createdAt !== b.createdAt) {
+        return a.createdAt < b.createdAt ? -1 : 1
+      }
+      // 同一消息分派的任务共享时间戳，使用 id 保证顺序稳定
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+    })
+    return queued
+  }
+
+  /** 为每个空闲 Agent 启动其最早的排队任务 */
+  private schedule(): void {
+    for (const task of this.collectQueued()) {
+      if (this.running.has(task.id)) {
+        continue
+      }
+      if (this.busyAgents.has(task.agentId)) {
+        continue
+      }
+      this.launch(task)
+    }
+  }
+
+  private launch(task: Task): void {
+    const controller = new AbortController()
+    let resolveDone!: () => void
+    const done = new Promise<void>((resolve) => {
+      resolveDone = resolve
+    })
+
+    // 先登记占用再开始执行，保证同一轮调度不会重复启动同一 Agent 的任务
+    this.running.set(task.id, { controller, done })
+    this.busyAgents.set(task.agentId, task.id)
+    this.events.emit({ type: 'agent-status', agentId: task.agentId, status: 'busy' })
+
+    void (async () => {
+      try {
+        await this.execute(task.id, controller)
+      } catch (error) {
+        // execute 已处理所有预期失败；这里兜底，避免异常逃逸导致 Agent 永久占用
+        const current = this.tasks.get(task.id)
+        if (current !== null && isActiveStatus(current.status)) {
+          this.finish(task, 'failed', `任务执行异常：${errorMessage(error)}`, null)
+        }
+      } finally {
+        this.running.delete(task.id)
+        this.busyAgents.delete(task.agentId)
+        this.cancelRequested.delete(task.id)
+        this.events.emit({ type: 'agent-status', agentId: task.agentId, status: 'idle' })
+        resolveDone()
+        // 任意终态都会释放 Agent，此时才有机会启动该 Agent 的下一个任务
+        this.schedule()
+      }
+    })()
+  }
+
+  /** 单个任务的完整运行流程；所有失败都在这里收敛成终态，不向上抛错 */
+  private async execute(taskId: string, controller: AbortController): Promise<void> {
+    const task = this.tasks.get(taskId)
+    if (task === null) {
+      return
+    }
+
+    const workspace = this.workspaces.get(task.workspaceId)
+    if (workspace === null) {
+      this.finish(task, 'failed', `任务所属工作区不存在：${task.workspaceId}`, null)
+      return
+    }
+    const agent = this.agents.get(task.agentId)
+    if (agent === null) {
+      this.finish(task, 'failed', `任务所属 Agent 不存在：${task.agentId}`, null)
+      return
+    }
+
+    // 解决冲突任务复用冲突现场：跳过 worktree 创建与 setup，在原分支上继续执行
+    const reusesWorktree = task.taskType === 'resolve' && task.worktreePath !== null
+
+    let worktreePath: string
+    try {
+      if (reusesWorktree) {
+        worktreePath = task.worktreePath as string
+        this.tasks.update(task.id, {
+          status: 'preparing',
+          startedAt: this.now().toISOString()
+        })
+        this.emitTask(task.id)
+      } else {
+        worktreePath = join(this.worktreesRoot, task.workspaceId, task.id)
+        const branch = `agent/${task.id}-${branchSlug(task.title)}`
+        // baseRef 记录任务启动时 integration 分支的确切提交，后面按其创建分支
+        const baseRef = await this.git.revParse(workspace.repoPath, workspace.integrationBranch)
+
+        this.tasks.update(task.id, {
+          status: 'preparing',
+          branch,
+          worktreePath,
+          baseRef,
+          startedAt: this.now().toISOString()
+        })
+        this.emitTask(task.id)
+
+        // git worktree add 只创建末级目录，父目录（worktreesRoot/<workspaceId>）可能不存在
+        await mkdir(dirname(worktreePath), { recursive: true })
+        await this.git.worktreeAdd(workspace.repoPath, worktreePath, branch, baseRef)
+      }
+    } catch (error) {
+      this.finish(task, 'failed', `准备任务 worktree 失败：${errorMessage(error)}`, null)
+      return
+    }
+
+    if (!reusesWorktree) {
+      const setupResult = await this.setup.run({
+        worktreePath,
+        repoPath: workspace.repoPath,
+        command: workspace.setupCommand,
+        copy: workspace.setupCopy,
+        timeoutMin: workspace.setupTimeoutMin
+      })
+      if (!setupResult.ok) {
+        // setup 失败保留 worktree 现场，便于用户排查
+        this.finish(task, 'failed', `环境准备失败：${setupResult.error}`, null)
+        return
+      }
+    }
+
+    this.tasks.update(task.id, { status: 'running' })
+    this.emitTask(task.id)
+    this.addSystemMessage(task, `开始执行任务：${task.title}`)
+
+    let summary: string | null = null
+    let timedOut = false
+    let lastProgressMessageAt: number | null = null
+    // 超时只覆盖 Agent 运行阶段；setup 时间不计入任务超时
+    const timeoutTimer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, workspace.taskTimeoutMin * 60_000)
+
+    try {
+      const writer = new LogWriter(this.logsRoot, task.id)
+      await writer.reset()
+
+      const adapter = this.adapters.create(agent)
+      const prompt = composePrompt(agent, task)
+
+      for await (const event of adapter.start({
+        prompt,
+        cwd: worktreePath,
+        signal: controller.signal
+      })) {
+        if (event.type === 'log') {
+          await writer.append(`${event.text}\n`)
+          continue
+        }
+
+        if (event.type === 'progress') {
+          // 任务卡片实时滚动依赖 task-progress；群消息按每分钟一条节流
+          this.events.emit({ type: 'task-progress', taskId: task.id, lines: [event.text] })
+          const nowMs = this.now().getTime()
+          if (
+            lastProgressMessageAt === null ||
+            nowMs - lastProgressMessageAt >= PROGRESS_MESSAGE_INTERVAL_MS
+          ) {
+            lastProgressMessageAt = nowMs
+            this.addSystemMessage(task, event.text)
+          }
+          continue
+        }
+
+        summary = event.summary
+      }
+
+      // 成功结束后提交全部改动；没有改动时返回 null，摘要标记为无代码改动
+      const commit = await this.git.commitAll(
+        worktreePath,
+        `agent(${agent.name}): ${task.title}`
+      )
+      if (commit === null) {
+        summary = '无代码改动'
+      }
+      this.finish(task, 'done', summary, 0)
+    } catch (error) {
+      // 超时优先于用户取消判断：两种路径都会 abort，但终态语义不同
+      if (timedOut) {
+        this.finish(
+          task,
+          'failed',
+          `任务超时（超过 ${workspace.taskTimeoutMin} 分钟未完成）`,
+          exitCodeOf(error)
+        )
+      } else if (this.cancelRequested.has(task.id)) {
+        this.finish(task, 'cancelled', '任务已取消', exitCodeOf(error))
+      } else {
+        this.finish(task, 'failed', errorMessage(error), exitCodeOf(error))
+      }
+    } finally {
+      clearTimeout(timeoutTimer)
+    }
+  }
+
+  /** 写入终态：持久化状态/摘要/退出码/结束时间，广播任务卡片并回群系统消息 */
+  private finish(
+    task: Task,
+    status: TaskStatus,
+    summary: string | null,
+    exitCode: number | null
+  ): void {
+    this.tasks.update(task.id, {
+      status,
+      summary,
+      exitCode,
+      finishedAt: this.now().toISOString()
+    })
+    this.emitTask(task.id)
+    this.addSystemMessage(task, terminalMessage(status, task.title, summary))
+  }
+
+  private emitTask(taskId: string): void {
+    const task = this.tasks.get(taskId)
+    if (task !== null) {
+      this.events.emit({ type: 'task-updated', task })
+    }
+  }
+
+  private addSystemMessage(task: Task, content: string): void {
+    const message: ChatMessage = {
+      id: randomUUID(),
+      workspaceId: task.workspaceId,
+      kind: 'system',
+      authorType: 'system',
+      authorId: null,
+      content,
+      taskId: task.id,
+      createdAt: this.now().toISOString()
+    }
+    this.messages.insert(message)
+    this.events.emit({ type: 'message', message })
+  }
+}
+
+/** 运行中的状态；其余状态视为终态（合并相关状态由 Task 12 管理） */
+function isActiveStatus(status: TaskStatus): boolean {
+  return status === 'queued' || status === 'preparing' || status === 'running'
+}
+
+/**
+ * 拼装 Agent 提示：角色说明、路径范围约束与任务文本之间用空行分隔。
+ * 路径范围同时用于合并前的越界检查，写进 prompt 是为了让 Agent 提前遵守。
+ */
+function composePrompt(agent: AgentConfig, task: Task): string {
+  const parts: string[] = []
+  if (agent.rolePrompt.trim() !== '') {
+    parts.push(agent.rolePrompt)
+  }
+  parts.push(`你的修改范围：${agent.pathScope.join('、')}；为空表示不限`)
+  parts.push(task.prompt)
+  return parts.join('\n\n')
+}
+
+/** 任务标题转分支 slug：小写、非字母数字折叠为 '-'、去首尾 '-'、最多 30 字符 */
+function branchSlug(title: string): string {
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 30)
+    .replace(/-+$/g, '')
+  return slug === '' ? 'task' : slug
+}
+
+function terminalMessage(status: TaskStatus, title: string, summary: string | null): string {
+  const head =
+    status === 'done'
+      ? `任务完成：${title}`
+      : status === 'cancelled'
+        ? `任务已取消：${title}`
+        : `任务失败：${title}`
+  return summary === null || summary === '' ? head : `${head}\n${summary}`
+}
+
+function exitCodeOf(error: unknown): number | null {
+  return error instanceof AgentRunError ? error.exitCode : null
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}

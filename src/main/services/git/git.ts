@@ -52,6 +52,15 @@ export class GitService {
     return stdout.trim()
   }
 
+  /**
+   * 把任意 ref 解析成完整提交哈希。任务启动时用它记录 base_ref，
+   * 保存的是当时 integration 分支的确切提交，而不是会移动的分支名。
+   */
+  async revParse(repo: string, ref: string): Promise<string> {
+    const { stdout } = await this.git(repo, ['rev-parse', ref])
+    return stdout.trim()
+  }
+
   /** 当前检出的分支名；工作区服务用它作为未指定目标分支时的默认比较基线 */
   async currentBranch(repo: string): Promise<string> {
     const { stdout } = await this.git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])

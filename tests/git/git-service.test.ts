@@ -37,6 +37,15 @@ describe('GitService', () => {
     expect(await git.currentBranch(repo.path)).toBe('current-branch')
   })
 
+  test('revParse resolves a ref to the exact commit hash', async () => {
+    await git.createBranch(repo.path, 'rev-target', 'HEAD')
+    const { stdout } = await gitRun(repo.path, ['rev-parse', 'rev-target'])
+
+    expect(await git.revParse(repo.path, 'rev-target')).toBe(stdout.trim())
+    // 同样适用于其他 ref 形式（例如 HEAD）
+    expect(await git.revParse(repo.path, 'HEAD')).toHaveLength(40)
+  })
+
   test('worktreeAdd creates branch and directory', async () => {
     const worktreePath = join(repo.root, 'wt-feature')
     await git.worktreeAdd(repo.path, worktreePath, 'feat-a', 'HEAD')
