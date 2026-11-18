@@ -201,9 +201,10 @@ export class TaskManager {
 
   /**
    * 重试任务：仅 interrupted/failed/cancelled 可重试。
-   * 重试前彻底清理旧现场（worktree 目录、git worktree 元数据、旧分支），
+   * 普通任务重试前彻底清理旧现场（worktree 目录、git worktree 元数据、旧分支），
    * 保证新一次执行从干净的 integration 基线开始；清理失败时保持原状态可再次重试。
-   * 原始 prompt 与标题保留，其余运行现场字段全部重置。
+   * 解决任务与父冲突任务共享分支与 worktree，重试时只重置运行结果、保留现场。
+   * 原始 prompt 与标题始终保留。
    */
   async retry(taskId: string): Promise<void> {
     const task = this.tasks.get(taskId)
@@ -217,6 +218,25 @@ export class TaskManager {
     const workspace = this.workspaces.get(task.workspaceId)
     if (workspace === null) {
       throw new Error(`任务所属工作区不存在：${task.workspaceId}`)
+    }
+
+    // 解决任务复用父冲突任务的现场：清理会连同父任务的 worktree/分支一起删除。
+    // 目录已被清理或不再是有效 worktree（缺少 .git 标记）时无法恢复现场，只能放弃后重新指派。
+    if (task.taskType === 'resolve') {
+      if (task.worktreePath === null || !existsSync(join(task.worktreePath, '.git'))) {
+        throw new Error('解决任务的工作区已不存在，请放弃后重新指派')
+      }
+
+      this.tasks.update(taskId, {
+        status: 'queued',
+        exitCode: null,
+        summary: null,
+        startedAt: null,
+        finishedAt: null
+      })
+      this.emitTask(taskId)
+      this.enqueue(taskId)
+      return
     }
 
     try {

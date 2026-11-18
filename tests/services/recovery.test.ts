@@ -265,6 +265,102 @@ describe('crash recovery', () => {
     expect(tasks.get(task.id)?.status).toBe('merged')
   })
 
+  test('retry re-queues a resolve task without touching the parent conflict scene', async () => {
+    insertAgent()
+    const parentId = randomUUID()
+    const resolveId = randomUUID()
+    const branch = `agent/${parentId}-conflict`
+    const worktreePath = join(worktreesRoot, workspace.id, parentId)
+    const baseRef = await git.revParse(tempRepo.path, INTEGRATION_BRANCH)
+
+    // 父冲突任务与解决任务共享同一分支和 worktree
+    await mkdir(dirname(worktreePath), { recursive: true })
+    await git.worktreeAdd(tempRepo.path, worktreePath, branch, baseRef)
+
+    const parent = insertTask({
+      id: parentId,
+      title: 'Conflicting parent',
+      status: 'conflict',
+      branch,
+      worktreePath,
+      baseRef,
+      startedAt: FIXED_TIME,
+      finishedAt: FIXED_TIME
+    })
+    const resolve = insertTask({
+      id: resolveId,
+      title: 'Resolve conflict',
+      taskType: 'resolve',
+      parentTaskId: parentId,
+      status: 'failed',
+      branch,
+      worktreePath,
+      baseRef,
+      prompt: '解决冲突后提交',
+      startedAt: FIXED_TIME,
+      finishedAt: FIXED_TIME,
+      summary: '解决失败',
+      exitCode: 1
+    })
+
+    const adapter = new FakeAdapter({
+      steps: [{ event: { type: 'final', summary: '重试完成' } }]
+    })
+    const manager = createManager(adapter)
+
+    await manager.retry(resolve.id)
+    await waitFor(() => tasks.get(resolve.id)?.status === 'done')
+
+    // 重试只重置运行结果，保留共享现场
+    const stored = tasks.get(resolve.id) as Task
+    expect(stored.branch).toBe(branch)
+    expect(stored.worktreePath).toBe(worktreePath)
+    expect(stored.baseRef).toBe(baseRef)
+    expect(stored.prompt).toBe('解决冲突后提交')
+    expect(recordStatuses(resolve.id)).toEqual(['queued', 'preparing', 'running', 'done'])
+    expect(adapter.runs).toHaveLength(1)
+    expect(adapter.runs[0]?.cwd).toBe(worktreePath)
+
+    // 父冲突任务的现场未被清理，状态也不受影响
+    expect(tasks.get(parent.id)?.status).toBe('conflict')
+    expect(existsSync(worktreePath)).toBe(true)
+    expect(await git.branchExists(tempRepo.path, branch)).toBe(true)
+  })
+
+  test('retry rejects a resolve task whose worktree is missing or invalid', async () => {
+    insertAgent()
+    const branch = 'agent/missing-parent-conflict'
+    const worktreePath = join(worktreesRoot, workspace.id, 'missing-parent')
+    const task = insertTask({
+      title: 'Resolve missing',
+      taskType: 'resolve',
+      status: 'failed',
+      branch,
+      worktreePath,
+      baseRef: 'base-ref',
+      prompt: '解决冲突后提交'
+    })
+
+    const manager = createManager(new FakeAdapter())
+
+    // 目录不存在
+    await expect(manager.retry(task.id)).rejects.toThrow(
+      '解决任务的工作区已不存在，请放弃后重新指派'
+    )
+    expect(tasks.get(task.id)?.status).toBe('failed')
+    expect(tasks.get(task.id)?.branch).toBe(branch)
+
+    // 目录存在但不是有效 worktree（缺少 .git 标记）同样拒绝
+    await mkdir(worktreePath, { recursive: true })
+    await expect(manager.retry(task.id)).rejects.toThrow(
+      '解决任务的工作区已不存在，请放弃后重新指派'
+    )
+    expect(tasks.get(task.id)?.status).toBe('failed')
+    expect(tasks.get(task.id)?.branch).toBe(branch)
+    // 两次拒绝都没有广播 queued，也没有启动 Agent
+    expect(recordStatuses(task.id)).toEqual([])
+  })
+
   test('recovery re-drives the merge callback for done tasks and isolates failures', async () => {
     insertAgent()
     const firstDone = insertTask({ title: 'Done one', status: 'done' })
