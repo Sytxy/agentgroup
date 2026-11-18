@@ -65,3 +65,21 @@ export async function listTasks(workspaceId: string): Promise<Task[]> {
 export async function listAgents(workspaceId: string): Promise<AgentConfig[]> {
   return (await window.api.invoke(IPC.agentsList, { workspaceId })) as AgentConfig[]
 }
+
+/** chat:send 的返回结构，与主进程 Dispatcher.send 一致。 */
+export interface ChatSendResult {
+  /** 本次写入数据库的用户消息。 */
+  message: ChatMessage
+  /** 按提及顺序创建的任务；无提及时为空数组。 */
+  tasks: Task[]
+}
+
+export async function sendChatMessage(
+  workspaceId: string,
+  text: string
+): Promise<ChatSendResult> {
+  return (await window.api.invoke(IPC.chatSend, {
+    workspaceId,
+    text
+  })) as ChatSendResult
+}

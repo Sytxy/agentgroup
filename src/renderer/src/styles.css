@@ -201,8 +201,10 @@ button {
 .chat-column {
   display: flex;
   flex-direction: column;
+  gap: 12px;
   min-width: 0;
-  overflow-y: auto;
+  min-height: 0;
+  overflow: hidden;
   padding: 20px;
 }
 
@@ -211,10 +213,177 @@ button {
   flex: 1;
   flex-direction: column;
   gap: 8px;
+  min-height: 0;
   padding: 16px;
-  border: 1px dashed var(--border);
+  overflow: hidden;
+  border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
+}
+
+.timeline-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 80%;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--surface-muted);
+}
+
+.message-content {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.message-author {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.message-user {
+  align-self: flex-end;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.message-user .message-author {
+  color: color-mix(in srgb, var(--accent-text) 70%, transparent);
+}
+
+.message-agent {
+  align-self: flex-start;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.message-system {
+  align-self: center;
+  max-width: 100%;
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.message-system .message-content {
+  font-size: 0.75rem;
+}
+
+.message-task-card {
+  align-self: center;
+  max-width: 100%;
+  border: 1px solid var(--accent);
+  background: var(--surface);
+}
+
+.message-task-status {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 消息输入框 ---- */
+
+.composer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.composer-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.composer-input:focus {
+  border-color: var(--accent);
+  outline: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  outline-offset: 1px;
+}
+
+.composer-input:disabled {
+  opacity: 0.6;
+}
+
+.composer-suggestions {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 6px;
+  padding: 4px;
+  min-width: 160px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 12%);
+  list-style: none;
+}
+
+.composer-suggestion {
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.composer-suggestion:hover,
+.composer-suggestion-active {
+  background: var(--surface-muted);
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.composer-error {
+  margin: 0 auto 0 0;
+  color: var(--danger);
+  font-size: 0.78rem;
+}
+
+.composer-send {
+  padding: 7px 16px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.composer-send:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .agent-column {

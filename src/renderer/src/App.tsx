@@ -8,8 +8,11 @@ import {
   listMessages,
   listTasks,
   listWorkspaces,
+  sendChatMessage,
   type DiffStat
 } from './api'
+import ChatTimeline from './components/ChatTimeline'
+import Composer from './components/Composer'
 import Sidebar from './components/Sidebar'
 import WorkspaceSetup from './components/WorkspaceSetup'
 
@@ -87,6 +90,41 @@ export default function App(): React.JSX.Element {
     }
   }, [selectedId])
 
+  // 订阅主进程推送。只合并当前工作区的事件并按 id 去重：
+  // 发送响应与推送事件可能同时到达，重复合并会让同一条消息出现两次。
+  // 切换工作区时重新订阅，避免把上一个工作区的事件写进当前状态。
+  useEffect(() => {
+    if (selectedId === null) {
+      return
+    }
+    return window.api.onEvent((event) => {
+      if (event.type === 'message') {
+        const message = event.message
+        if (message.workspaceId !== selectedId) {
+          return
+        }
+        setMessages((current) =>
+          current.some((item) => item.id === message.id)
+            ? current
+            : [...current, message]
+        )
+        return
+      }
+      if (event.type === 'task-updated') {
+        const task = event.task
+        if (task.workspaceId !== selectedId) {
+          return
+        }
+        setTasks((current) =>
+          current.some((item) => item.id === task.id)
+            ? current.map((item) => (item.id === task.id ? task : item))
+            : [...current, task]
+        )
+      }
+      // task-progress / agent-status 供后续任务面板与成员面板使用，这里暂不处理
+    })
+  }, [selectedId])
+
   // 创建成功后刷新列表并选中新工作区。刷新失败时至少把返回值并入列表，
   // 避免创建已经成功、界面却回到空状态让用户重复提交。
   const handleCreated = useCallback(async (created: Workspace): Promise<void> => {
@@ -102,6 +140,31 @@ export default function App(): React.JSX.Element {
     }
     setSelectedId(created.id)
   }, [])
+
+  // 发送消息后把返回的消息与任务并入本地状态；错误交给 Composer 展示。
+  const handleSend = useCallback(
+    async (text: string): Promise<void> => {
+      if (selectedId === null) {
+        return
+      }
+      const result = await sendChatMessage(selectedId, text)
+      setMessages((current) =>
+        current.some((message) => message.id === result.message.id)
+          ? current
+          : [...current, result.message]
+      )
+      setTasks((current) => {
+        let next = current
+        for (const task of result.tasks) {
+          next = next.some((item) => item.id === task.id)
+            ? next.map((item) => (item.id === task.id ? task : item))
+            : [...next, task]
+        }
+        return next
+      })
+    },
+    [selectedId]
+  )
 
   if (!loaded) {
     return <div className="app-loading">正在加载工作区…</div>
@@ -161,13 +224,8 @@ export default function App(): React.JSX.Element {
 
         <div className="workspace-body">
           <section className="chat-column">
-            <div className="chat-timeline" data-testid="chat-timeline">
-              <h2 className="panel-title">群聊</h2>
-              <p className="panel-empty">消息时间线将在这里显示。</p>
-              <p className="panel-meta">
-                已加载 {messages.length} 条消息、{tasks.length} 个任务
-              </p>
-            </div>
+            <ChatTimeline messages={messages} tasks={tasks} agents={agents} />
+            <Composer agents={agents} onSend={handleSend} />
           </section>
 
           <aside className="agent-column" data-testid="agent-panel">
