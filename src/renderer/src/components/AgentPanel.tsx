@@ -12,13 +12,16 @@ interface AgentPanelProps {
   tasks: Task[]
   /** 添加/删除成功后由父组件重新拉取成员列表。 */
   onChanged: () => void | Promise<void>
+  /** 收起成员面板；不传时面板保持常驻（直接渲染组件的测试场景）。 */
+  onClose?: () => void
 }
 
 export default function AgentPanel({
   workspaceId,
   agents,
   tasks,
-  onChanged
+  onChanged,
+  onClose
 }: AgentPanelProps): React.JSX.Element {
   const [addOpen, setAddOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -74,13 +77,25 @@ export default function AgentPanel({
     <aside className="agent-column" data-testid="agent-panel">
       <div className="agent-panel-header">
         <h2 className="panel-title">Agent 成员</h2>
-        <button
-          type="button"
-          className="agent-add-button"
-          onClick={() => setAddOpen(true)}
-        >
-          + 添加 Agent
-        </button>
+        <div className="agent-panel-actions">
+          <button
+            type="button"
+            className="agent-add-button"
+            onClick={() => setAddOpen(true)}
+          >
+            + 添加 Agent
+          </button>
+          {onClose !== undefined && (
+            <button
+              type="button"
+              className="agent-close-button"
+              aria-label="收起成员面板"
+              onClick={onClose}
+            >
+              收起
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="agent-summary" aria-label="成员状态概览">

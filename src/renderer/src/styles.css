@@ -490,11 +490,15 @@ select:focus-visible {
 
 .workspace-body {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 330px;
+  grid-template-columns: minmax(0, 1fr);
   flex: 1;
   gap: 18px;
   min-height: 0;
   padding: 0 24px 22px;
+}
+
+.workspace-body-agents {
+  grid-template-columns: minmax(0, 1fr) 330px;
 }
 
 .chat-column {
@@ -800,6 +804,18 @@ select:focus-visible {
   background: var(--panel);
   box-shadow: var(--shadow-soft);
   backdrop-filter: blur(14px);
+  animation: agent-panel-in 160ms ease;
+}
+
+@keyframes agent-panel-in {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .agent-panel-header {
@@ -808,6 +824,30 @@ select:focus-visible {
   justify-content: space-between;
   gap: 10px;
   padding-bottom: 12px;
+}
+
+.agent-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.agent-close-button {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--faint);
+  font-size: 0.66rem;
+  cursor: pointer;
+  transition:
+    color 140ms ease,
+    border-color 140ms ease;
+}
+
+.agent-close-button:hover {
+  border-color: transparent;
+  color: var(--accent-strong);
 }
 
 .agent-add-button {
@@ -1683,8 +1723,12 @@ select:focus-visible {
   }
 
   .workspace-body {
-    grid-template-columns: minmax(0, 1fr) 300px;
+    grid-template-columns: minmax(0, 1fr);
     padding: 0 18px 18px;
+  }
+
+  .workspace-body-agents {
+    grid-template-columns: minmax(0, 1fr) 300px;
   }
 
   .workspace-header {
@@ -1715,7 +1759,8 @@ select:focus-visible {
     text-align: left;
   }
 
-  .workspace-body {
+  .workspace-body,
+  .workspace-body-agents {
     grid-template-columns: 1fr;
   }
 

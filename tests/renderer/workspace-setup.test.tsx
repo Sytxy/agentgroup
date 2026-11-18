@@ -103,6 +103,9 @@ describe('工作区外壳', () => {
       await screen.findByRole('heading', { level: 1, name: 'demo' })
     ).toBeInTheDocument()
     expect(screen.getByTestId('chat-timeline')).toBeInTheDocument()
+    // 成员面板默认收起，点顶部“成员”才展开
+    expect(screen.queryByTestId('agent-panel')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '成员' }))
     expect(screen.getByTestId('agent-panel')).toBeInTheDocument()
   })
 
@@ -156,8 +159,9 @@ describe('工作区外壳', () => {
       '2 个文件 · +5 · -1'
     )
 
-    // 三栏布局中的两个占位区域
+    // 三栏布局中的两个占位区域；成员面板需要先展开
     expect(screen.getByTestId('chat-timeline')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '成员' }))
     expect(screen.getByTestId('agent-panel')).toBeInTheDocument()
   })
 })

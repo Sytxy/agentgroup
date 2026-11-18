@@ -87,6 +87,8 @@ export default function App(): React.JSX.Element {
   // task-progress 只保留最近几行，任务进入终态后删除，避免长时间运行时无限增长
   const [progress, setProgress] = useState<Record<string, string[]>>({})
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // 成员面板默认收起，把宽度让给聊天区；点顶部“成员”再展开。
+  const [agentPanelOpen, setAgentPanelOpen] = useState(false)
   const [copyNotice, setCopyNotice] = useState<string | null>(null)
 
   // 挂载时加载工作区列表，存在工作区则默认选中第一个
@@ -431,6 +433,15 @@ export default function App(): React.JSX.Element {
             <button
               type="button"
               className="header-button"
+              aria-expanded={agentPanelOpen}
+              aria-controls="agent-panel"
+              onClick={() => setAgentPanelOpen((open) => !open)}
+            >
+              {agentPanelOpen ? '收起成员' : '成员'}
+            </button>
+            <button
+              type="button"
+              className="header-button"
               onClick={() => setSettingsOpen(true)}
             >
               设置
@@ -448,7 +459,11 @@ export default function App(): React.JSX.Element {
           )}
         </header>
 
-        <div className="workspace-body">
+        <div
+          className={
+            agentPanelOpen ? 'workspace-body workspace-body-agents' : 'workspace-body'
+          }
+        >
           <section className="chat-column">
             <ChatTimeline
               messages={messages}
@@ -460,12 +475,15 @@ export default function App(): React.JSX.Element {
             <Composer agents={agents} onSend={handleSend} />
           </section>
 
-          <AgentPanel
-            workspaceId={selected.id}
-            agents={agents}
-            tasks={tasks}
-            onChanged={handleAgentsChanged}
-          />
+          {agentPanelOpen && (
+            <AgentPanel
+              workspaceId={selected.id}
+              agents={agents}
+              tasks={tasks}
+              onChanged={handleAgentsChanged}
+              onClose={() => setAgentPanelOpen(false)}
+            />
+          )}
         </div>
 
         {settingsOpen && (
