@@ -8,6 +8,15 @@ import { SCHEMA_SQL } from './schema'
 export type SqlValue = string | number | Uint8Array | null
 export type Row = Record<string, SqlValue>
 
+/** 清理持久化失败时留下的临时文件；清理失败不能掩盖原始错误 */
+function removeIfExists(filePath: string): void {
+  try {
+    fs.unlinkSync(filePath)
+  } catch {
+    // 文件可能尚未创建或已被删除，无需处理
+  }
+}
+
 export class Db {
   private closed = false
 
@@ -16,9 +25,42 @@ export class Db {
     readonly filePath: string
   ) {}
 
-  /** 将内存数据库导出并写入磁盘。所有写操作后由仓储调用。 */
+  /**
+   * 将内存数据库导出并原子地写入磁盘。所有写操作后由仓储调用。
+   *
+   * 直接写目标文件时，进程在 write 中途崩溃会把整个数据库截断。这里先把新内容
+   * 写入 `<file>.tmp` 并 fsync，把上一代文件复制为 `<file>.bak`，最后用 rename
+   * 原子替换目标文件：任何时刻目标路径要么是完整旧文件，要么是完整新文件。
+   * 写入/替换失败时清理临时文件并向上抛出，不静默吞掉持久化错误。
+   */
   persist(): void {
-    fs.writeFileSync(this.filePath, this.raw.export())
+    const data = this.raw.export()
+    const tmpPath = `${this.filePath}.tmp`
+    const backupPath = `${this.filePath}.bak`
+
+    const fd = fs.openSync(tmpPath, 'w')
+    try {
+      try {
+        fs.writeFileSync(fd, data)
+        fs.fsyncSync(fd)
+      } finally {
+        fs.closeSync(fd)
+      }
+    } catch (error) {
+      removeIfExists(tmpPath)
+      throw error
+    }
+
+    try {
+      if (fs.existsSync(this.filePath)) {
+        fs.copyFileSync(this.filePath, backupPath)
+      }
+      fs.renameSync(tmpPath, this.filePath)
+    } catch (error) {
+      // rename 失败时旧文件仍在原位置，删除临时文件后把错误交给调用方
+      removeIfExists(tmpPath)
+      throw error
+    }
   }
 
   /** 关闭数据库；重复调用安全，便于测试清理时无需关心是否已关闭。 */

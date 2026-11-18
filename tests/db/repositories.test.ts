@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import type { AgentConfig, ChatMessage, Task, Workspace } from '../../src/shared/types'
 import { openDatabase } from '../../src/main/db/database'
@@ -259,6 +260,29 @@ describe('sqlite repositories', () => {
         exitCode: 0,
         summary: 'Finished'
       })
+    } finally {
+      reopened.close()
+    }
+  })
+
+  test('persist writes atomically and keeps the previous generation readable', async () => {
+    workspaces.insert(makeWorkspace())
+    expect(fs.existsSync(`${handle.filePath}.tmp`)).toBe(false)
+    const firstGeneration = fs.readFileSync(handle.filePath)
+
+    workspaces.insert(makeWorkspace({ id: 'ws-2', name: 'second' }))
+
+    // 临时文件在成功写入后必须消失；备份保留上一代完整文件
+    expect(fs.existsSync(`${handle.filePath}.tmp`)).toBe(false)
+    expect(fs.existsSync(`${handle.filePath}.bak`)).toBe(true)
+    expect(fs.readFileSync(`${handle.filePath}.bak`)).toEqual(firstGeneration)
+    expect(fs.statSync(handle.filePath).size).toBeGreaterThan(0)
+
+    // 目标文件始终是完整数据库，可以直接重新打开
+    handle.db.close()
+    const reopened = await openDatabase(handle.filePath, WASM_PATH)
+    try {
+      expect(new WorkspaceRepo(reopened).list().map((row) => row.id)).toEqual(['ws-1', 'ws-2'])
     } finally {
       reopened.close()
     }

@@ -122,6 +122,34 @@ describe('WorkspaceService', () => {
     )
   })
 
+  test('ensureIntegrationWorktree recreates a deleted integration worktree', async () => {
+    const workspace = await service.create({ name: 'Heal', repoPath: tempRepo.path })
+    const worktreePath = service.integrationWorktreePath(workspace.id)
+
+    // 模拟用户移动/删除 App 数据目录：目录消失，但 git 元数据仍记录旧路径
+    await rm(worktreePath, { recursive: true, force: true })
+    expect(existsSync(worktreePath)).toBe(false)
+
+    await service.ensureIntegrationWorktree(workspace)
+
+    expect(existsSync(worktreePath)).toBe(true)
+    const { stdout } = await gitRun(worktreePath, ['rev-parse', '--abbrev-ref', 'HEAD'])
+    expect(stdout.trim()).toBe(INTEGRATION_BRANCH)
+    const { stdout: status } = await gitRun(worktreePath, ['status', '--porcelain'])
+    expect(status.trim()).toBe('')
+  })
+
+  test('ensureIntegrationWorktree is a no-op when the worktree still exists', async () => {
+    const workspace = await service.create({ name: 'Keep', repoPath: tempRepo.path })
+    const worktreePath = service.integrationWorktreePath(workspace.id)
+    await writeFile(join(worktreePath, 'LOCAL.md'), 'local\n')
+
+    await service.ensureIntegrationWorktree(workspace)
+
+    // 已存在时不能重置用户/任务留下的目录内容
+    expect(existsSync(join(worktreePath, 'LOCAL.md'))).toBe(true)
+  })
+
   test('diffStat compares integration with target branch', async () => {
     const { stdout: branchOut } = await gitRun(tempRepo.path, ['rev-parse', '--abbrev-ref', 'HEAD'])
     const targetBranch = branchOut.trim()

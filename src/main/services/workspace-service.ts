@@ -104,6 +104,52 @@ export class WorkspaceService {
     return join(this.worktreesRoot, workspaceId, 'integration')
   }
 
+  /**
+   * 确保 integration worktree 存在。
+   *
+   * 用户可能移动/删除 App 数据目录，或上一次运行清理不完整，导致数据库里的
+   * 工作区仍指向一个不存在的 worktree；此后任何合并都会失败。启动时按需重建：
+   * - 目录已存在：直接返回，不做额外 git 操作；
+   * - 目录缺失：创建父目录后把集成分支重新检出到原路径；
+   * - git 仍记录旧路径时首次 add 会失败，prune 掉失效元数据后重试一次。
+   * 集成分支本身缺失属于数据损坏，这里只抛出可读错误，不擅自重建分支历史。
+   */
+  async ensureIntegrationWorktree(workspace: Workspace): Promise<void> {
+    const worktreePath = this.integrationWorktreePath(workspace.id)
+    if (existsSync(worktreePath)) {
+      return
+    }
+
+    const add = async (): Promise<void> => {
+      // worktree add 只创建末级目录，父目录可能随数据目录清理一起消失
+      await mkdir(dirname(worktreePath), { recursive: true })
+      await this.git.worktreeAddExisting(
+        workspace.repoPath,
+        worktreePath,
+        workspace.integrationBranch
+      )
+    }
+
+    try {
+      await add()
+    } catch {
+      // 目录被外部删除后 git 仍可能保留 worktree 元数据，导致“已注册”冲突
+      try {
+        await this.git.pruneWorktrees(workspace.repoPath)
+      } catch {
+        // prune 失败不掩盖真正的添加错误
+      }
+      try {
+        await add()
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        throw new Error(
+          `恢复工作区 ${workspace.name} 的集成 worktree ${worktreePath} 失败：${detail}`
+        )
+      }
+    }
+  }
+
   /** 集成 worktree 相对目标分支的变更规模；没有目标分支时返回全零 */
   async diffStat(workspace: Workspace): Promise<DiffStat> {
     if (workspace.targetBranch === null) {
