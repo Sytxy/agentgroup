@@ -89,7 +89,7 @@ describe('WorkspaceService', () => {
     const { stdout: before } = await gitRun(tempRepo.path, ['worktree', 'list', '--porcelain'])
 
     await expect(service.create({ name: 'Second', repoPath: tempRepo.path })).rejects.toThrow(
-      /^该仓库已存在工作区：First$/
+      /^该仓库已添加为项目：First$/
     )
 
     // 失败的第二次创建不能留下额外记录或 git 状态

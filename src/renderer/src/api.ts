@@ -37,6 +37,11 @@ export async function listWorkspaces(): Promise<Workspace[]> {
   return (await window.api.invoke(IPC.workspaceList)) as Workspace[]
 }
 
+/** 弹出系统目录选择器；取消时返回 null。 */
+export async function pickFolder(): Promise<string | null> {
+  return (await window.api.invoke(IPC.workspacePickFolder)) as string | null
+}
+
 export async function createWorkspace(input: WorkspaceCreateInput): Promise<Workspace> {
   return (await window.api.invoke(IPC.workspaceCreate, input)) as Workspace
 }

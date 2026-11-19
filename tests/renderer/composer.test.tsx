@@ -135,14 +135,14 @@ describe('消息输入框', () => {
   })
 
   test('send error is displayed and the input is kept', async () => {
-    const onSend = vi.fn().mockRejectedValue(new Error('chat:send 失败：工作区不存在'))
+    const onSend = vi.fn().mockRejectedValue(new Error('chat:send 失败：项目不存在'))
     render(<Composer agents={[]} onSend={onSend} />)
     const input = screen.getByRole('textbox', { name: '消息输入' })
 
     fireEvent.change(input, { target: { value: '大家好' } })
     fireEvent.keyDown(input, { key: 'Enter' })
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('工作区不存在')
+    expect(await screen.findByRole('alert')).toHaveTextContent('项目不存在')
     expect(input).toHaveValue('大家好')
   })
 })

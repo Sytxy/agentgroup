@@ -7,6 +7,7 @@ export const IPC = {
   workspaceList: 'workspace:list',
   workspaceUpdate: 'workspace:update',
   workspaceDiff: 'workspace:diff',
+  workspacePickFolder: 'workspace:pick-folder',
   agentsList: 'agents:list',
   agentsAdd: 'agents:add',
   agentsUpdate: 'agents:update',

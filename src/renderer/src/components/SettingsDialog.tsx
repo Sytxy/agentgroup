@@ -95,10 +95,10 @@ export default function SettingsDialog({
         className="dialog-card dialog-card-wide"
         role="dialog"
         aria-modal="true"
-        aria-label="工作区设置"
+        aria-label="项目设置"
         onSubmit={handleSubmit}
       >
-        <h2 className="dialog-title">工作区设置</h2>
+        <h2 className="dialog-title">项目设置</h2>
 
         <label className="dialog-field" htmlFor="settings-user-name">
           我的名字

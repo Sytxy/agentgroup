@@ -55,20 +55,35 @@ afterEach(() => {
   cleanup()
 })
 
-describe('工作区外壳', () => {
-  test('空状态显示创建工作区表单', async () => {
+describe('项目外壳', () => {
+  test('空状态显示添加项目表单', async () => {
     installApi({ 'workspace:list': () => [] })
 
     render(<App />)
 
-    expect(await screen.findByRole('heading', { name: '新建工作区' })).toBeInTheDocument()
-    expect(screen.getByLabelText('工作区名称')).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: '添加项目' })).toBeInTheDocument()
+    expect(screen.getByLabelText('项目名称')).toBeInTheDocument()
     expect(screen.getByLabelText('仓库路径')).toBeInTheDocument()
-    expect(screen.getByLabelText('目标分支（可选）')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '创建工作区' })).toBeInTheDocument()
+    expect(screen.queryByLabelText('目标分支（可选）')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '添加项目' })).toBeInTheDocument()
   })
 
-  test('提交表单调用 workspace:create 并渲染工作区', async () => {
+  test('选择文件夹后自动填入路径和项目名', async () => {
+    installApi({
+      'workspace:list': () => [],
+      'workspace:pick-folder': () => '/Users/me/payments'
+    })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '选择文件夹' }))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('仓库路径')).toHaveValue('/Users/me/payments')
+    })
+    expect(screen.getByLabelText('项目名称')).toHaveValue('payments')
+  })
+
+  test('提交表单调用 workspace:create 并渲染项目', async () => {
     let created = false
     const invoke = installApi({
       'workspace:list': () => (created ? [workspace] : []),
@@ -84,13 +99,13 @@ describe('工作区外壳', () => {
 
     render(<App />)
 
-    fireEvent.change(await screen.findByLabelText('工作区名称'), {
+    fireEvent.change(await screen.findByLabelText('项目名称'), {
       target: { value: 'demo' }
     })
     fireEvent.change(screen.getByLabelText('仓库路径'), {
       target: { value: '/repo' }
     })
-    fireEvent.click(screen.getByRole('button', { name: '创建工作区' }))
+    fireEvent.click(screen.getByRole('button', { name: '添加项目' }))
 
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith('workspace:create', {
@@ -113,24 +128,24 @@ describe('工作区外壳', () => {
     installApi({
       'workspace:list': () => [],
       'workspace:create': () => {
-        throw new Error('workspace:create 失败：该仓库已存在工作区：demo')
+        throw new Error('workspace:create 失败：该仓库已添加为项目：demo')
       }
     })
 
     render(<App />)
 
-    fireEvent.change(await screen.findByLabelText('工作区名称'), {
+    fireEvent.change(await screen.findByLabelText('项目名称'), {
       target: { value: 'demo' }
     })
     fireEvent.change(screen.getByLabelText('仓库路径'), {
       target: { value: '/repo' }
     })
-    fireEvent.click(screen.getByRole('button', { name: '创建工作区' }))
+    fireEvent.click(screen.getByRole('button', { name: '添加项目' }))
 
     const alert = await screen.findByRole('alert')
-    expect(alert).toHaveTextContent('该仓库已存在工作区：demo')
+    expect(alert).toHaveTextContent('该仓库已添加为项目：demo')
     // 出错后表单仍在，用户可以修改后重新提交
-    expect(screen.getByLabelText('工作区名称')).toBeInTheDocument()
+    expect(screen.getByLabelText('项目名称')).toBeInTheDocument()
   })
 
   test('存在工作区时初始加载历史、任务、成员与 diff', async () => {

@@ -318,12 +318,12 @@ describe('createIpcHandlers', () => {
     agents.get.mockReturnValue(null)
     await expect(
       handlers[IPC.workspaceUpdate]!({ workspaceId: 'w1', patch: { defaultAgentId: 'a1' } })
-    ).rejects.toThrow(`${IPC.workspaceUpdate} 失败：默认 Agent 不存在或不属于该工作区`)
+    ).rejects.toThrow(`${IPC.workspaceUpdate} 失败：默认 Agent 不存在或不属于该项目`)
 
     agents.get.mockReturnValue({ ...agent, workspaceId: 'w2' })
     await expect(
       handlers[IPC.workspaceUpdate]!({ workspaceId: 'w1', patch: { defaultAgentId: 'a1' } })
-    ).rejects.toThrow(`${IPC.workspaceUpdate} 失败：默认 Agent 不存在或不属于该工作区`)
+    ).rejects.toThrow(`${IPC.workspaceUpdate} 失败：默认 Agent 不存在或不属于该项目`)
 
     agents.get.mockReturnValue({ ...agent, enabled: false })
     await expect(
@@ -336,6 +336,15 @@ describe('createIpcHandlers', () => {
       patch: { defaultAgentId: 'a1' }
     })
     expect(workspaces.update).toHaveBeenCalledWith('w1', { defaultAgentId: 'a1' })
+  })
+
+  test('workspace:pick-folder delegates to the injected picker', async () => {
+    const { ctx } = makeFakeContext()
+    const pickFolder = vi.fn(async () => '/tmp/repo')
+    const handlers = createIpcHandlers({ ...ctx, pickFolder } as unknown as AppContext)
+
+    await expect(handlers[IPC.workspacePickFolder]!(undefined)).resolves.toBe('/tmp/repo')
+    expect(pickFolder).toHaveBeenCalled()
   })
 
   test('tasks:create-resolve delegates and leaves task-card creation to the factory', async () => {

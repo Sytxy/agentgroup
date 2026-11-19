@@ -34,9 +34,15 @@ export class WorkspaceService {
     try {
       repoPath = await this.git.assertRepo(input.repoPath)
     } catch (error) {
-      // 错误信息带上用户选择的目录，渲染进程可以直接提示具体是哪个路径无效
+      // 错误信息带上用户选择的目录，渲染进程可以直接提示具体是哪个路径无效。
+      // “不是 git 仓库”是最常见的输入错误，转成短提示；其他 git 失败保留原始原因。
       const detail = error instanceof Error ? error.message : String(error)
-      throw new Error(`无法在 ${input.repoPath} 打开 git 仓库：${detail}`)
+      if (/not a git repository|不是 git 仓库/i.test(detail)) {
+        throw new Error(
+          `该路径不是 git 仓库：${input.repoPath}。请选择仓库根目录或其中的子目录。`
+        )
+      }
+      throw new Error(`无法打开 git 仓库：${input.repoPath}（${detail}）`)
     }
 
     // v1 每个仓库只允许一个工作区：集成分支名固定，若重复创建，git 会因同一分支
@@ -44,7 +50,7 @@ export class WorkspaceService {
     // 保证失败的第二创建不会留下任何副作用。
     const duplicate = this.repo.list().find((workspace) => workspace.repoPath === repoPath)
     if (duplicate) {
-      throw new Error(`该仓库已存在工作区：${duplicate.name}`)
+      throw new Error(`该仓库已添加为项目：${duplicate.name}`)
     }
 
     const id = randomUUID()

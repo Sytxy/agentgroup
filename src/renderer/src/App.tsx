@@ -344,13 +344,13 @@ export default function App(): React.JSX.Element {
   )
 
   if (!loaded) {
-    return <div className="app-loading">正在加载工作区…</div>
+    return <div className="app-loading">正在加载项目…</div>
   }
 
   if (loadError !== null) {
     return (
       <div className="app-loading" role="alert">
-        加载工作区失败：{loadError}
+        加载项目失败：{loadError}
       </div>
     )
   }
@@ -362,7 +362,7 @@ export default function App(): React.JSX.Element {
   const selected =
     workspaces.find((workspace) => workspace.id === selectedId) ?? workspaces[0]
   if (selected === undefined) {
-    return <div className="app-loading">正在加载工作区…</div>
+    return <div className="app-loading">正在加载项目…</div>
   }
 
   const mergeCommand = `git merge ${selected.integrationBranch}`
@@ -441,7 +441,7 @@ export default function App(): React.JSX.Element {
               <button
                 type="button"
                 className="header-button"
-                aria-label="重新加载工作区数据"
+                aria-label="重新加载项目数据"
                 onClick={() => setReloadToken((value) => value + 1)}
               >
                 重试
@@ -478,7 +478,7 @@ export default function App(): React.JSX.Element {
           </div>
           {detailError !== null && (
             <p className="workspace-error" role="alert">
-              加载工作区数据失败：{detailError}
+              加载项目数据失败：{detailError}
             </p>
           )}
         </header>

@@ -49,7 +49,7 @@ export function createIpcHandlers(ctx: AppContext): Record<string, IpcHandler> {
   const requireWorkspace = (workspaceId: string): Workspace => {
     const workspace = ctx.workspaces.get(workspaceId)
     if (workspace === null) {
-      throw new Error(`工作区不存在：${workspaceId}`)
+      throw new Error(`项目不存在：${workspaceId}`)
     }
     return workspace
   }
@@ -75,6 +75,13 @@ export function createIpcHandlers(ctx: AppContext): Record<string, IpcHandler> {
 
   define(IPC.workspaceList, () => ctx.workspaceService.list())
 
+  define(IPC.workspacePickFolder, async () => {
+    if (ctx.pickFolder === undefined) {
+      throw new Error('当前环境不支持选择文件夹')
+    }
+    return ctx.pickFolder()
+  })
+
   define(IPC.workspaceUpdate, async (payload) => {
     const input = record(payload)
     const workspaceId = requiredString(input, 'workspaceId')
@@ -91,7 +98,7 @@ export function createIpcHandlers(ctx: AppContext): Record<string, IpcHandler> {
     if (patch.defaultAgentId !== undefined && patch.defaultAgentId !== null) {
       const agent = ctx.agents.get(patch.defaultAgentId)
       if (agent === null || agent.workspaceId !== workspaceId) {
-        throw new Error('默认 Agent 不存在或不属于该工作区')
+        throw new Error('默认 Agent 不存在或不属于该项目')
       }
       if (!agent.enabled) {
         throw new Error('默认 Agent 已停用，请先启用')

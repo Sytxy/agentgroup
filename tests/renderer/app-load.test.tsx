@@ -121,9 +121,9 @@ describe('初始加载容错', () => {
     expect(screen.getByTestId('agent-a1')).toHaveTextContent('claude')
     // 差异统计单独降级为头部提示，不产生整页错误
     expect(screen.getByTestId('diff-error')).toHaveTextContent('差异不可用')
-    expect(screen.queryByText(/加载工作区数据失败/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/加载项目数据失败/)).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '重新加载工作区数据' }))
+    fireEvent.click(screen.getByRole('button', { name: '重新加载项目数据' }))
 
     await waitFor(() => expect(diffCalls).toBe(2))
     expect(await screen.findByTestId('diff-stat')).toHaveTextContent('2 个文件 · +10 · -3')

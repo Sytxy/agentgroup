@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, BrowserWindow, ipcMain, Notification, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Notification, shell } from 'electron'
 import { IPC } from '../shared/ipc'
 import { createAppContext, type AppContext } from './app-context'
 import { createIpcHandlers } from './ipc-handlers'
@@ -145,6 +145,17 @@ void app
         if (message !== '') {
           throw new Error(message)
         }
+      },
+      pickFolder: async () => {
+        const options: Electron.OpenDialogOptions = {
+          title: '选择 Git 仓库',
+          properties: ['openDirectory', 'createDirectory']
+        }
+        const parent = BrowserWindow.getFocusedWindow()
+        const result = parent
+          ? await dialog.showOpenDialog(parent, options)
+          : await dialog.showOpenDialog(options)
+        return result.canceled ? null : (result.filePaths[0] ?? null)
       }
     })
     context = appContext

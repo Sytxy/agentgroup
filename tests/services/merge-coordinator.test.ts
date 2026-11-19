@@ -503,7 +503,7 @@ describe('MergeCoordinator', () => {
     const conflict = await createConflictTask()
 
     expect(() => coordinator.createResolveTask(conflict.id, 'agent-missing')).toThrow(
-      '解决 Agent 不存在或不属于该工作区：agent-missing'
+      '解决 Agent 不存在或不属于该项目：agent-missing'
     )
 
     insertAgent({ id: 'agent-disabled', name: 'disabled', enabled: false })
@@ -514,7 +514,7 @@ describe('MergeCoordinator', () => {
     // 其他工作区的 Agent 同样不能接管本工作区的冲突现场
     insertAgent({ id: 'agent-other', name: 'other', workspaceId: 'other-workspace' })
     expect(() => coordinator.createResolveTask(conflict.id, 'agent-other')).toThrow(
-      '解决 Agent 不存在或不属于该工作区：agent-other'
+      '解决 Agent 不存在或不属于该项目：agent-other'
     )
 
     expect(

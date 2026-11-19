@@ -171,7 +171,7 @@ export class MergeCoordinator {
     // 无法由本工作区的调度器执行，创建后只会留下永远排队的任务卡片。
     const agent = this.agents.get(agentId)
     if (agent === null || agent.workspaceId !== conflict.workspaceId) {
-      throw new Error(`解决 Agent 不存在或不属于该工作区：${agentId}`)
+      throw new Error(`解决 Agent 不存在或不属于该项目：${agentId}`)
     }
     if (!agent.enabled) {
       throw new Error(`解决 Agent 已停用：${agent.name}`)
@@ -434,7 +434,7 @@ export class MergeCoordinator {
   private loadWorkspace(task: Task): Workspace {
     const workspace = this.workspaces.get(task.workspaceId)
     if (workspace === null) {
-      throw new Error(`任务所属工作区不存在：${task.workspaceId}`)
+      throw new Error(`任务所属项目不存在：${task.workspaceId}`)
     }
     return workspace
   }

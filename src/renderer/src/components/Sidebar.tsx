@@ -20,7 +20,7 @@ export default function Sidebar({
         <span className="sidebar-brand-name">{APP_NAME}</span>
       </div>
       <p className="sidebar-tagline">多 Agent 协作台</p>
-      <nav className="workspace-list" aria-label="工作区列表">
+      <nav className="workspace-list" aria-label="项目列表">
         {workspaces.map((workspace) => (
           <button
             key={workspace.id}

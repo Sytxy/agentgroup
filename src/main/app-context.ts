@@ -31,6 +31,8 @@ export interface AppContextDeps {
   logsRoot: string
   /** 在系统文件管理器中打开路径；生产环境接 Electron shell.openPath。 */
   openPath: (path: string) => Promise<void>
+  /** 弹出系统目录选择器；生产环境接 Electron dialog.showOpenDialog。 */
+  pickFolder?: () => Promise<string | null>
 }
 
 export interface AppContext {
@@ -48,6 +50,7 @@ export interface AppContext {
   worktreesRoot: string
   logsRoot: string
   openPath: (path: string) => Promise<void>
+  pickFolder?: () => Promise<string | null>
 }
 
 export async function createAppContext(deps: AppContextDeps): Promise<AppContext> {
@@ -148,6 +151,7 @@ export async function createAppContext(deps: AppContextDeps): Promise<AppContext
     dispatcher,
     worktreesRoot: deps.worktreesRoot,
     logsRoot: deps.logsRoot,
-    openPath: deps.openPath
+    openPath: deps.openPath,
+    pickFolder: deps.pickFolder
   }
 }
