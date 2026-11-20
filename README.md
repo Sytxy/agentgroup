@@ -54,7 +54,9 @@ App 数据位于 `~/Library/Application Support/agentgroup/`（数据库、workt
 
 ## 添加 Agent
 
-在右侧「Agent 成员」面板点击「+ 添加 Agent」，填写名称、角色说明，并选择预设：
+在右侧「Agent 成员」面板点击「+ 添加 Agent」。应用会先探测本机的 `claude`、`codex`、`deepseek`/`deepseek-cli`、`gemini`、`aider`、`opencode`：检测到的可以一键添加，未安装的显示安装命令；也可以切到「手动配置」接入任意 CLI。
+
+手动配置时填写名称、角色说明，并选择预设：
 
 | 预设 | 实际执行的命令 | 说明 |
 | --- | --- | --- |

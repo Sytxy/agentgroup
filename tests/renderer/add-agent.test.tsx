@@ -1,16 +1,48 @@
 // 添加 Agent 对话框测试：预设切换、自定义命令字段、权限档位警示与提交的完整 AgentConfig。
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import type { AgentConfig } from '../../src/shared/types'
+import type { AgentConfig, DetectedAgent } from '../../src/shared/types'
 import AddAgentDialog from '../../src/renderer/src/components/AddAgentDialog'
 
 afterEach(() => {
   cleanup()
 })
 
-function installApi(): ReturnType<typeof vi.fn> {
-  const invoke = vi.fn(async (_channel: string, payload?: unknown) => {
+const detected: DetectedAgent[] = [
+  {
+    id: 'claude',
+    name: 'Claude Code CLI',
+    vendor: 'Anthropic',
+    description: 'Anthropic 官方 CLI。',
+    command: 'claude',
+    preset: 'claude',
+    installHint: 'npm install -g @anthropic-ai/claude-code',
+    rolePrompt: '负责编写代码。',
+    installed: true,
+    version: '2.1.327',
+    path: '/nvm/bin/claude'
+  },
+  {
+    id: 'gemini',
+    name: 'Gemini CLI',
+    vendor: 'Google',
+    description: 'Google 的终端 Agent。',
+    command: 'gemini',
+    preset: 'custom',
+    installHint: 'npm install -g @google/gemini-cli',
+    rolePrompt: '负责编写代码。',
+    installed: false,
+    version: null,
+    path: null
+  }
+]
+
+function installApi(candidates: DetectedAgent[] = detected): ReturnType<typeof vi.fn> {
+  const invoke = vi.fn(async (channel: string, payload?: unknown) => {
+    if (channel === 'agents:detect') {
+      return candidates
+    }
     return payload as AgentConfig
   })
   window.api = {
@@ -20,12 +52,68 @@ function installApi(): ReturnType<typeof vi.fn> {
   return invoke
 }
 
+function existingAgent(name: string): AgentConfig {
+  return {
+    id: `agent-${name}`,
+    workspaceId: 'w1',
+    name,
+    preset: 'claude',
+    command: 'claude',
+    argsTemplate: null,
+    rolePrompt: '',
+    pathScope: [],
+    permissionProfile: 'edit-only',
+    canDelegate: false,
+    enabled: true
+  }
+}
+
 describe('添加 Agent 对话框', () => {
-  test('add agent dialog warns for edit-and-run profile', () => {
+  test('检测本机 Agent 并支持一键添加', async () => {
+    const invoke = installApi()
+    const onAdded = vi.fn()
+    const onClose = vi.fn()
+    render(
+      <AddAgentDialog
+        workspaceId="w1"
+        existingAgents={[existingAgent('claude')]}
+        onAdded={onAdded}
+        onClose={onClose}
+      />
+    )
+
+    expect(await screen.findByText('已检测到 1 个本地 Agent')).toBeInTheDocument()
+
+    const geminiCard = screen.getByText('Gemini CLI').closest('article') as HTMLElement
+    expect(within(geminiCard).getByText('未检测到')).toBeInTheDocument()
+    expect(within(geminiCard).getByRole('button', { name: '未安装' })).toBeDisabled()
+
+    const claudeCard = screen.getByText('Claude Code CLI').closest('article') as HTMLElement
+    expect(within(claudeCard).getByText(/2\.1\.327/)).toBeInTheDocument()
+    fireEvent.click(within(claudeCard).getByRole('button', { name: '添加' }))
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith(
+        'agents:add',
+        expect.objectContaining({
+          workspaceId: 'w1',
+          name: 'claude2',
+          preset: 'claude',
+          command: 'claude',
+          permissionProfile: 'edit-and-run'
+        })
+      )
+    })
+    expect(onAdded).toHaveBeenCalled()
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  test('add agent dialog warns for edit-and-run profile', async () => {
     const invoke = installApi()
     const onAdded = vi.fn()
     const onClose = vi.fn()
     render(<AddAgentDialog workspaceId="w1" onAdded={onAdded} onClose={onClose} />)
+    fireEvent.click(await screen.findByRole('button', { name: '手动配置自定义 Agent' }))
 
     // Claude 预设默认命令，不可编辑；未选择 edit-and-run 时不显示警示
     const command = screen.getByLabelText('命令')
@@ -79,7 +167,8 @@ describe('添加 Agent 对话框', () => {
         })
       )
     }).then(() => {
-      const payload = invoke.mock.calls[0]?.[1] as AgentConfig
+      const addCall = invoke.mock.calls.find(([channel]) => channel === 'agents:add')
+      const payload = addCall?.[1] as AgentConfig
       expect(typeof payload.id).toBe('string')
       expect(payload.id.length).toBeGreaterThan(0)
       expect(onAdded).toHaveBeenCalledWith(payload)
@@ -87,14 +176,15 @@ describe('添加 Agent 对话框', () => {
     })
   })
 
-  test('requires a name before submitting and cancel closes the dialog', () => {
+  test('requires a name before submitting and cancel closes the dialog', async () => {
     const invoke = installApi()
     const onClose = vi.fn()
     render(<AddAgentDialog workspaceId="w1" onAdded={vi.fn()} onClose={onClose} />)
+    fireEvent.click(await screen.findByRole('button', { name: '手动配置自定义 Agent' }))
 
     fireEvent.click(screen.getByRole('button', { name: '添加' }))
     expect(screen.getByRole('alert')).toHaveTextContent('名称')
-    expect(invoke).not.toHaveBeenCalled()
+    expect(invoke.mock.calls.some(([channel]) => channel === 'agents:add')).toBe(false)
 
     fireEvent.click(screen.getByRole('button', { name: '取消' }))
     expect(onClose).toHaveBeenCalled()

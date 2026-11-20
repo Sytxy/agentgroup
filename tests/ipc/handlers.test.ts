@@ -338,6 +338,15 @@ describe('createIpcHandlers', () => {
     expect(workspaces.update).toHaveBeenCalledWith('w1', { defaultAgentId: 'a1' })
   })
 
+  test('agents:detect delegates to the detector', async () => {
+    const { ctx } = makeFakeContext()
+    const detectAgents = vi.fn(async () => [])
+    const handlers = createIpcHandlers({ ...ctx, detectAgents } as unknown as AppContext)
+
+    await expect(handlers[IPC.agentsDetect]!(undefined)).resolves.toEqual([])
+    expect(detectAgents).toHaveBeenCalled()
+  })
+
   test('workspace:pick-folder delegates to the injected picker', async () => {
     const { ctx } = makeFakeContext()
     const pickFolder = vi.fn(async () => '/tmp/repo')

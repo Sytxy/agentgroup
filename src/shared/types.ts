@@ -50,6 +50,21 @@ export interface AgentConfig {
   enabled: boolean
 }
 
+/** 本机可检测到的 Agent CLI 候选，用于“添加 Agent”画廊。 */
+export interface DetectedAgent {
+  id: string
+  name: string
+  vendor: string
+  description: string
+  command: string
+  preset: AgentConfig['preset']
+  installHint: string
+  rolePrompt: string
+  installed: boolean
+  version: string | null
+  path: string | null
+}
+
 export interface Task {
   id: string
   workspaceId: string

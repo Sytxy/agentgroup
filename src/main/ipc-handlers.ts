@@ -115,6 +115,8 @@ export function createIpcHandlers(ctx: AppContext): Record<string, IpcHandler> {
 
   // ---- Agent ----
 
+  define(IPC.agentsDetect, () => ctx.detectAgents())
+
   define(IPC.agentsList, (payload) => {
     const input = record(payload)
     return ctx.agents.listByWorkspace(requiredString(input, 'workspaceId'))

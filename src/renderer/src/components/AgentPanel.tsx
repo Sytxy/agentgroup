@@ -265,6 +265,7 @@ export default function AgentPanel({
       {addOpen && (
         <AddAgentDialog
           workspaceId={workspaceId}
+          existingAgents={agents}
           onAdded={() => onChanged()}
           onClose={() => setAddOpen(false)}
         />

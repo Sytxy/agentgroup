@@ -2,7 +2,7 @@
 // 所有 IPC 调用都集中在这里，组件不直接接触通道字符串，
 // 返回类型与主进程 ipc-handlers.ts 的参数/返回值保持一致。
 import { IPC, type DesktopApi } from '../../shared/ipc'
-import type { AgentConfig, ChatMessage, Task, Workspace } from '../../shared/types'
+import type { AgentConfig, ChatMessage, DetectedAgent, Task, Workspace } from '../../shared/types'
 
 /** 与主进程 git 服务的 diff 统计结构一致。 */
 export type DiffStat = { files: number; insertions: number; deletions: number }
@@ -136,6 +136,11 @@ export async function getTaskLog(taskId: string): Promise<string> {
 }
 
 // ---- 成员管理 ----
+
+/** 探测本机已安装的 Agent CLI；未安装的候选也会返回。 */
+export async function detectAgents(): Promise<DetectedAgent[]> {
+  return (await window.api.invoke(IPC.agentsDetect)) as DetectedAgent[]
+}
 
 export async function addAgent(input: AgentConfig): Promise<AgentConfig> {
   return (await window.api.invoke(IPC.agentsAdd, input)) as AgentConfig

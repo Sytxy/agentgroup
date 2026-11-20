@@ -11,6 +11,7 @@ import { TaskRepo } from './db/task-repo'
 import { WorkspaceRepo } from './db/workspace-repo'
 import { EventBus } from './events'
 import { DefaultAdapterFactory } from './services/agents/adapter-factory'
+import { detectAgents } from './services/agents/agent-detector'
 import { Dispatcher } from './services/chat/dispatcher'
 import { GitService } from './services/git/git'
 import { SerialQueue } from './services/git/serial-queue'
@@ -19,6 +20,7 @@ import { SetupRunner } from './services/tasks/setup-runner'
 import { TaskFactory } from './services/tasks/task-factory'
 import { TaskManager } from './services/tasks/task-manager'
 import { WorkspaceService } from './services/workspace-service'
+import type { DetectedAgent } from '../shared/types'
 
 export interface AppContextDeps {
   /** SQLite 数据库文件路径；测试传临时目录。 */
@@ -51,6 +53,8 @@ export interface AppContext {
   logsRoot: string
   openPath: (path: string) => Promise<void>
   pickFolder?: () => Promise<string | null>
+  /** 探测本机 Agent CLI；纯 Node 子进程，不依赖 Electron。 */
+  detectAgents: () => Promise<DetectedAgent[]>
 }
 
 export async function createAppContext(deps: AppContextDeps): Promise<AppContext> {
@@ -152,6 +156,7 @@ export async function createAppContext(deps: AppContextDeps): Promise<AppContext
     worktreesRoot: deps.worktreesRoot,
     logsRoot: deps.logsRoot,
     openPath: deps.openPath,
-    pickFolder: deps.pickFolder
+    pickFolder: deps.pickFolder,
+    detectAgents: () => detectAgents()
   }
 }

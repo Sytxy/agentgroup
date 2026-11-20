@@ -12,6 +12,7 @@ export const IPC = {
   agentsAdd: 'agents:add',
   agentsUpdate: 'agents:update',
   agentsRemove: 'agents:remove',
+  agentsDetect: 'agents:detect',
   chatSend: 'chat:send',
   chatHistory: 'chat:history',
   tasksList: 'tasks:list',
