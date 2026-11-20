@@ -1613,6 +1613,14 @@ select:focus-visible {
   gap: 10px;
 }
 
+/* 运行中的紧凑卡片只剩取消操作，不再占一条状态/进度区域 */
+.task-card-inline-minimal {
+  margin-top: 0;
+  padding: 0;
+  border: 0;
+  gap: 0;
+}
+
 .task-card-inline .task-card-meta,
 .task-card-inline .task-card-actions {
   padding-left: 0;

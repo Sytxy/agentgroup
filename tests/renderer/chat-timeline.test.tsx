@@ -136,8 +136,10 @@ describe('群聊时间线', () => {
     expect(card).toHaveClass('message-agent')
     expect(card).toHaveTextContent('claude')
     expect(card).toHaveTextContent('正在执行')
-    // 任务卡片展示对应任务的当前状态（中文标签）
-    expect(within(card).getByTestId('task-card-status')).toHaveTextContent('运行中')
+    // 运行中只保留取消操作，不再展示分支、耗时和工具调用进度
+    expect(within(card).getByRole('button', { name: '取消' })).toBeInTheDocument()
+    expect(within(card).queryByTestId('task-card-status')).not.toBeInTheDocument()
+    expect(within(card).queryByTestId('task-progress')).not.toBeInTheDocument()
 
     // Agent 消息展示成员名而不是 id
     const agentMessage = screen.getByTestId('message-agent')

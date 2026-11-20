@@ -116,7 +116,7 @@ describe('初始加载容错', () => {
 
     // 消息、任务卡片和成员面板照常显示（成员面板默认收起）
     expect(await screen.findByText('请修复登录')).toBeInTheDocument()
-    expect(await screen.findByTestId('task-card')).toHaveTextContent('运行中')
+    expect(await screen.findByTestId('task-card')).toHaveTextContent('取消')
     fireEvent.click(screen.getByRole('button', { name: '成员' }))
     expect(screen.getByTestId('agent-a1')).toHaveTextContent('claude')
     // 差异统计单独降级为头部提示，不产生整页错误

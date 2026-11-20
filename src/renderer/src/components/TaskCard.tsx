@@ -70,7 +70,7 @@ export default function TaskCard({
   agents,
   activeResolveTask,
   compact = false
-}: TaskCardProps): React.JSX.Element {
+}: TaskCardProps): React.JSX.Element | null {
   const [resolveAgentId, setResolveAgentId] = useState('')
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
@@ -87,12 +87,19 @@ export default function TaskCard({
       task.status === 'awaiting_approval' ||
       RETRYABLE.has(task.status))
   // 已合并等没有操作的状态不渲染空按钮行，避免状态条下方多出一段留白
+  // 运行中的紧凑卡片只保留取消操作；分支、耗时和工具调用进度是调试信息，
+  // 在聊天里展示会变成一长串重复的“执行 Bash”，没有必要。
+  const minimal = compact && ACTIVE_STATUSES.has(task.status)
   const hasActions =
     CANCELLABLE.has(task.status) ||
     (task.status === 'conflict' && !resolveInProgress) ||
     task.status === 'awaiting_approval' ||
     RETRYABLE.has(task.status) ||
     canAbandon
+
+  if (minimal && !hasActions) {
+    return null
+  }
 
   /** 统一处理操作按钮：执行期间禁用其他按钮，失败时展示可读错误。 */
   const runAction = async (name: string, action: () => Promise<unknown>): Promise<void> => {
@@ -117,20 +124,26 @@ export default function TaskCard({
 
   return (
     <section
-      className={compact ? 'task-card task-card-inline' : 'task-card'}
+      className={
+        compact
+          ? `task-card task-card-inline${minimal ? ' task-card-inline-minimal' : ''}`
+          : 'task-card'
+      }
       data-testid="task-card"
       data-status={task.status}
     >
       {compact ? (
-        <div className="task-card-inline-head">
-          <div className="task-card-meta">
-            <span data-testid="task-branch">分支：{task.branch ?? '—'}</span>
-            <span data-testid="task-elapsed">耗时 {formatElapsed(task)}</span>
+        !minimal && (
+          <div className="task-card-inline-head">
+            <div className="task-card-meta">
+              <span data-testid="task-branch">分支：{task.branch ?? '—'}</span>
+              <span data-testid="task-elapsed">耗时 {formatElapsed(task)}</span>
+            </div>
+            <span className="task-card-status" data-testid="task-card-status">
+              {STATUS_LABELS[task.status]}
+            </span>
           </div>
-          <span className="task-card-status" data-testid="task-card-status">
-            {STATUS_LABELS[task.status]}
-          </span>
-        </div>
+        )
       ) : (
         <>
           <header className="task-card-header">
@@ -171,7 +184,7 @@ export default function TaskCard({
         </p>
       )}
 
-      {showProgress && (
+      {showProgress && !minimal && (
         <div className="task-card-progress">
           <span className="task-card-section-label">最近进度</span>
           {recentProgress.length === 0 ? (
