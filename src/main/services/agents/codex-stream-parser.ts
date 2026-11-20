@@ -42,7 +42,9 @@ export class CodexStreamParser {
     )
     if (progressMarker !== undefined) {
       const text = progressText(parsed, item)
-      return text.length > 0 ? [{ type: 'progress', text }] : []
+      return text.length > 0
+        ? [{ type: 'progress', text, signature: `codex:${text}` }]
+        : []
     }
 
     // 只有“已完成”的事件才可能是最终摘要；error / turn.failed 也带 message，

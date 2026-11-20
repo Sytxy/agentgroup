@@ -511,6 +511,25 @@ describe('TaskManager', () => {
     expect(adapter.active).toBe(0)
   })
 
+  test('a task repeating the same tool command too many times fails', async () => {
+    insertAgent()
+    const signature = 'Bash:gh release upload v0.1.0 AgentGroup-0.1.0-arm64.dmg'
+    const adapter = new FakeAdapter({
+      steps: Array.from({ length: 3 }, () => ({
+        event: { type: 'progress', text: '执行 Bash', signature }
+      }))
+    })
+    const task = insertTask({ title: 'Retry loop' })
+
+    const manager = createManager(adapter)
+    manager.start()
+    await waitFor(() => tasks.get(task.id)?.status === 'failed')
+
+    const stored = tasks.get(task.id) as Task
+    expect(stored.summary).toContain('重复执行同一命令')
+    expect(adapter.runs[0]?.signal.aborted).toBe(true)
+  })
+
   test('adapter failure marks the task failed with its message', async () => {
     insertAgent()
     const adapter = new FakeAdapter({

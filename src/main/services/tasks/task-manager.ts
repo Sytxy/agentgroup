@@ -26,6 +26,13 @@ import type { TaskFactory } from './task-factory'
 
 /** 群里进度系统消息的节流间隔：每分钟最多一条，避免刷屏 */
 const PROGRESS_MESSAGE_INTERVAL_MS = 60_000
+/**
+ * 同一工具命令在窗口内重复这么多次就判定为死循环。
+ * Agent 卡在网络上时常见的行为是反复重试同一条命令，且每次都会产生进度事件，
+ * 只靠“无输出”保护抓不到。
+ */
+const MAX_REPEATED_COMMAND_ATTEMPTS = 3
+const REPEATED_COMMAND_WINDOW_MS = 10 * 60_000
 
 /**
  * 委派链的最大深度：用户直接分派的任务深度为 0，其委派任务为 1。
@@ -581,6 +588,8 @@ export class TaskManager {
     let summary: string | null = null
     let timedOut = false
     let stalled = false
+    let repeatedCommand = false
+    const commandAttempts = new Map<string, number[]>()
     let lastProgressMessageAt: number | null = null
     // 任务总超时之外再加一层“无输出”保护：网络命令挂住时 Agent 可能几十分钟
     // 不再产生任何事件，总超时要等 60 分钟才知道失败。
@@ -620,6 +629,18 @@ export class TaskManager {
         }
 
         if (event.type === 'progress') {
+          if (event.signature !== undefined) {
+            const nowMs = this.now().getTime()
+            const recent = (commandAttempts.get(event.signature) ?? []).filter(
+              (time) => nowMs - time <= REPEATED_COMMAND_WINDOW_MS
+            )
+            recent.push(nowMs)
+            commandAttempts.set(event.signature, recent)
+            if (recent.length >= MAX_REPEATED_COMMAND_ATTEMPTS) {
+              repeatedCommand = true
+              controller.abort()
+            }
+          }
           // 任务卡片实时滚动依赖 task-progress；群消息按每分钟一条节流
           this.events.emit({ type: 'task-progress', taskId: task.id, lines: [event.text] })
           const nowMs = this.now().getTime()
@@ -634,6 +655,10 @@ export class TaskManager {
         }
 
         summary = event.summary
+      }
+
+      if (repeatedCommand) {
+        throw new Error('Agent 重复执行同一命令')
       }
 
       // 成功结束后提交全部改动；只有 Agent 没有给出文本回复时才用占位摘要，
@@ -657,6 +682,13 @@ export class TaskManager {
         )
       } else if (this.cancelRequested.has(task.id)) {
         this.finish(task, 'cancelled', '任务已取消', exitCodeOf(error))
+      } else if (repeatedCommand) {
+        this.finish(
+          task,
+          'failed',
+          `Agent 重复执行同一命令（${MAX_REPEATED_COMMAND_ATTEMPTS} 次），已终止`,
+          exitCodeOf(error)
+        )
       } else if (stalled) {
         this.finish(
           task,

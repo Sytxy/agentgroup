@@ -131,7 +131,11 @@ describe('ClaudeStreamParser', () => {
     const events = fixtureLines.flatMap((line) => parser.pushLine(line))
 
     expect(events).toEqual([
-      { type: 'progress', text: '执行 Read' },
+      {
+        type: 'progress',
+        text: '执行 Read',
+        signature: 'Read:{"file_path":"src/index.ts"}'
+      },
       { type: 'progress', text: 'hello from claude' },
       { type: 'final', summary: 'All done' },
       { type: 'log', text: 'not json at all' }
@@ -171,7 +175,11 @@ describe('ClaudeAdapter', () => {
       cwd
     })
     expect(events).toEqual([
-      { type: 'progress', text: '执行 Read' },
+      {
+        type: 'progress',
+        text: '执行 Read',
+        signature: 'Read:{"file_path":"src/index.ts"}'
+      },
       { type: 'progress', text: 'hello from claude' },
       { type: 'final', summary: 'All done' },
       { type: 'log', text: 'not json at all' }

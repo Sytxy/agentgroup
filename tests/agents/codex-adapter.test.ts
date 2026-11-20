@@ -125,8 +125,8 @@ describe('CodexStreamParser', () => {
     const events = fixtureLines.flatMap((line) => parser.pushLine(line))
 
     expect(events).toEqual([
-      { type: 'progress', text: '执行 pnpm test' },
-      { type: 'progress', text: '执行 read_file' },
+      { type: 'progress', text: '执行 pnpm test', signature: 'codex:执行 pnpm test' },
+      { type: 'progress', text: '执行 read_file', signature: 'codex:执行 read_file' },
       { type: 'final', summary: 'All done' },
       { type: 'log', text: 'plain text line' }
     ])
@@ -152,7 +152,7 @@ describe('CodexStreamParser', () => {
     const parser = new CodexStreamParser()
 
     expect(parser.pushLine('{"type":"command_execution","command":"ls -la"}')).toEqual([
-      { type: 'progress', text: '执行 ls -la' }
+      { type: 'progress', text: '执行 ls -la', signature: 'codex:执行 ls -la' }
     ])
     expect(parser.pushLine('{"type":"item.completed","message":"done"}')).toEqual([
       { type: 'final', summary: 'done' }
@@ -199,8 +199,8 @@ describe('CodexAdapter', () => {
       }
     ])
     expect(events).toEqual([
-      { type: 'progress', text: '执行 pnpm test' },
-      { type: 'progress', text: '执行 read_file' },
+      { type: 'progress', text: '执行 pnpm test', signature: 'codex:执行 pnpm test' },
+      { type: 'progress', text: '执行 read_file', signature: 'codex:执行 read_file' },
       { type: 'final', summary: 'All done' },
       { type: 'log', text: 'plain text line' }
     ])

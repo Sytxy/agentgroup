@@ -7,7 +7,12 @@
 
 export type AgentEvent =
   | { type: 'log'; text: string } // 原始输出行（已剥离 ANSI 控制码），写入任务日志
-  | { type: 'progress'; text: string } // 可读进度，取最近一个非空行；节流由任务管理器负责
+  | {
+      type: 'progress'
+      text: string
+      /** 工具调用的稳定指纹，用于发现 Agent 反复重试同一命令；普通文本进度没有。 */
+      signature?: string
+    }
   | { type: 'final'; summary: string } // 进程正常结束后的最终摘要
 
 export interface AgentAdapter {

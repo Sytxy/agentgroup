@@ -51,7 +51,11 @@ function parseAssistantMessage(message: unknown): AgentEvent[] {
       continue
     }
     if (block.type === 'tool_use' && typeof block.name === 'string') {
-      events.push({ type: 'progress', text: `执行 ${block.name}` })
+      events.push({
+        type: 'progress',
+        text: `执行 ${block.name}`,
+        signature: toolSignature(block.name, block.input)
+      })
       continue
     }
     if (block.type === 'text' && typeof block.text === 'string') {
@@ -67,4 +71,15 @@ function parseAssistantMessage(message: unknown): AgentEvent[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/** 工具名 + 输入的稳定指纹；空白折叠，避免同一命令因格式差异绕过重复检测。 */
+function toolSignature(name: string, input: unknown): string {
+  let serialized: string
+  try {
+    serialized = JSON.stringify(input) ?? ''
+  } catch {
+    serialized = String(input)
+  }
+  return `${name}:${serialized.replace(/\s+/g, ' ').trim()}`
 }
