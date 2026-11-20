@@ -685,7 +685,8 @@ export class TaskManager {
         authorId: task.agentId,
         content: summary,
         taskId: task.id,
-        createdAt: this.now().toISOString()
+        createdAt: this.now().toISOString(),
+        attachments: []
       }
       this.messages.insert(message)
       this.events.emit({ type: 'message', message })
@@ -811,7 +812,8 @@ export class TaskManager {
       authorId: null,
       content,
       taskId: task.id,
-      createdAt: this.now().toISOString()
+      createdAt: this.now().toISOString(),
+      attachments: []
     }
     this.messages.insert(message)
     this.events.emit({ type: 'message', message })

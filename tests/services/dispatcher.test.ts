@@ -101,6 +101,7 @@ describe('Dispatcher', () => {
       authorId: null,
       content: '做登录功能 @claude 前端页面 @codex 后端接口 @deepseek 测试',
       taskId: null,
+      attachments: [],
       createdAt: '2026-11-18T10:00:00.000Z'
     })
     expect(result.tasks).toHaveLength(3)
@@ -196,6 +197,26 @@ describe('Dispatcher', () => {
     expect(stored.map((message) => message.kind)).toEqual(['user', 'task-card', 'system'])
     expect(stored[1]?.taskId).toBe(result.tasks[0]?.id)
     expect(stored[2]?.content).toBe('未 @ 成员，已交给默认 Agent：claude')
+  })
+
+  test('stores attachments and includes their paths in the task prompt', async () => {
+    const dispatcher = createDispatcher('agent-claude')
+    const attachment = {
+      id: 'att-1',
+      name: 'screen.png',
+      mimeType: 'image/png',
+      size: 123,
+      path: '/tmp/screen.png',
+      url: 'agentgroup-attachment://att-1/screen.png'
+    }
+
+    const result = await dispatcher.send(WORKSPACE_ID, '', [attachment])
+
+    expect(result.message.attachments).toEqual([attachment])
+    expect(result.tasks).toHaveLength(1)
+    expect(result.tasks[0]?.title).toBe('请查看附件')
+    expect(result.tasks[0]?.prompt).toContain('请查看附件')
+    expect(result.tasks[0]?.prompt).toContain('/tmp/screen.png')
   })
 
   test('does not use the default when a known mention has no task text', async () => {

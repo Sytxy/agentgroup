@@ -1,4 +1,4 @@
-import type { ChatMessage } from '../../shared/types'
+import type { ChatAttachment, ChatMessage } from '../../shared/types'
 import {
   nullableText,
   queryRows,
@@ -10,6 +10,15 @@ import {
 
 export type MessagePatch = Partial<Omit<ChatMessage, 'id' | 'createdAt'>>
 
+function parseAttachments(value: string): ChatAttachment[] {
+  try {
+    const parsed: unknown = JSON.parse(value)
+    return Array.isArray(parsed) ? (parsed as ChatAttachment[]) : []
+  } catch {
+    return []
+  }
+}
+
 function mapRow(row: Row): ChatMessage {
   return {
     id: text(row, 'id'),
@@ -19,7 +28,8 @@ function mapRow(row: Row): ChatMessage {
     authorId: nullableText(row, 'author_id'),
     content: text(row, 'content'),
     taskId: nullableText(row, 'task_id'),
-    createdAt: text(row, 'created_at')
+    createdAt: text(row, 'created_at'),
+    attachments: parseAttachments(text(row, 'attachments_json'))
   }
 }
 
@@ -29,8 +39,8 @@ export class MessageRepo {
   insert(message: ChatMessage): void {
     this.db.raw.run(
       `INSERT INTO messages (
-        id, workspace_id, kind, author_type, author_id, content, task_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        id, workspace_id, kind, author_type, author_id, content, task_id, created_at, attachments_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         message.id,
         message.workspaceId,
@@ -39,7 +49,8 @@ export class MessageRepo {
         message.authorId,
         message.content,
         message.taskId,
-        message.createdAt
+        message.createdAt,
+        JSON.stringify(message.attachments ?? [])
       ]
     )
     this.db.persist()
@@ -73,6 +84,9 @@ export class MessageRepo {
     if (patch.authorId !== undefined) set('author_id', patch.authorId)
     if (patch.content !== undefined) set('content', patch.content)
     if (patch.taskId !== undefined) set('task_id', patch.taskId)
+    if (patch.attachments !== undefined) {
+      set('attachments_json', JSON.stringify(patch.attachments))
+    }
 
     if (assignments.length === 0) return
     this.db.raw.run(`UPDATE messages SET ${assignments.join(', ')} WHERE id = ?`, [...params, id])

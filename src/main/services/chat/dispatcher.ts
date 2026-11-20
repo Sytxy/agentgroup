@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { ChatMessage, Task } from '../../../shared/types'
+import type { ChatAttachment, ChatMessage, Task } from '../../../shared/types'
 import type { AgentRepo } from '../../db/agent-repo'
 import type { MessageRepo } from '../../db/message-repo'
 import type { EventBus } from '../../events'
@@ -55,17 +55,25 @@ export class Dispatcher {
     this.now = deps.now ?? (() => new Date())
   }
 
-  async send(workspaceId: string, text: string): Promise<DispatchResult> {
+  async send(
+    workspaceId: string,
+    text: string,
+    attachments: ChatAttachment[] = []
+  ): Promise<DispatchResult> {
     const createdAt = this.now().toISOString()
 
     // 插入消息并同步广播；本次分派的所有记录共用同一时间戳，测试可完全确定。
     const insertMessage = (
-      fields: Pick<ChatMessage, 'kind' | 'authorType' | 'authorId' | 'content' | 'taskId'>
+      fields: Pick<
+        ChatMessage,
+        'kind' | 'authorType' | 'authorId' | 'content' | 'taskId'
+      > & { attachments?: ChatMessage['attachments'] }
     ): ChatMessage => {
       const message: ChatMessage = {
         id: this.newId(),
         workspaceId,
         ...fields,
+        attachments: fields.attachments ?? [],
         createdAt
       }
       this.messages.insert(message)
@@ -79,8 +87,17 @@ export class Dispatcher {
       authorType: 'user',
       authorId: null,
       content: text,
-      taskId: null
+      taskId: null,
+      attachments
     })
+
+    // 附件保存为绝对路径后写进任务提示词，Agent 可以直接读取。
+    const attachmentSection =
+      attachments.length === 0
+        ? ''
+        : `\n\n附件（请直接读取这些本地文件）：\n${attachments
+            .map((attachment) => `- ${attachment.path}（${attachment.name}，${attachment.mimeType}）`)
+            .join('\n')}`
 
     const enabledAgents = this.agents
       .listByWorkspace(workspaceId)
@@ -122,11 +139,13 @@ export class Dispatcher {
         return { message: userMessage, tasks: [] }
       }
 
-      const prompt = text.trim()
-      if (prompt === '') {
+      const promptText = text.trim()
+      if (promptText === '' && attachments.length === 0) {
         return { message: userMessage, tasks: [] }
       }
-      const title = Array.from(prompt).slice(0, 40).join('')
+      const basePrompt = promptText === '' ? '请查看附件' : promptText
+      const prompt = `${basePrompt}${attachmentSection}`
+      const title = Array.from(basePrompt).slice(0, 40).join('')
       const task = this.factory.create({
         workspaceId,
         agentId: defaultAgent.id,
@@ -158,12 +177,19 @@ export class Dispatcher {
       }
 
       // 共享背景只拼一次到任务提示前，空背景不产生多余空行。
-      const prompt =
+      const assignmentPrompt =
         parsed.sharedContext.length > 0
           ? `${parsed.sharedContext}\n\n${assignment.prompt}`
           : assignment.prompt
+      const basePrompt =
+        assignmentPrompt.trim() === '' && attachments.length > 0
+          ? '请查看附件'
+          : assignmentPrompt
+      const prompt = `${basePrompt}${attachmentSection}`
       // 标题按 Unicode 码点截断，避免把 emoji 等代理对截成半个字符。
-      const title = Array.from(prompt).slice(0, 40).join('')
+      const title = Array.from(basePrompt === '' ? '附件' : basePrompt)
+        .slice(0, 40)
+        .join('')
 
       // 先只落库任务与卡片消息，等系统分派消息也写入后再统一入队，
       // 避免任务启动产生的系统消息插到“已分派”之前。

@@ -82,6 +82,7 @@ function makeMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
     content: '@Claude add a login page',
     taskId: null,
     createdAt: '2026-11-18T10:00:00.000Z',
+    attachments: [],
     ...overrides
   }
 }

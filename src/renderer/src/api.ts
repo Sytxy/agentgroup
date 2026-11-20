@@ -2,7 +2,14 @@
 // 所有 IPC 调用都集中在这里，组件不直接接触通道字符串，
 // 返回类型与主进程 ipc-handlers.ts 的参数/返回值保持一致。
 import { IPC, type DesktopApi } from '../../shared/ipc'
-import type { AgentConfig, ChatMessage, DetectedAgent, Task, Workspace } from '../../shared/types'
+import type {
+  AgentConfig,
+  AttachmentInput,
+  ChatMessage,
+  DetectedAgent,
+  Task,
+  Workspace
+} from '../../shared/types'
 
 /** 与主进程 git 服务的 diff 统计结构一致。 */
 export type DiffStat = { files: number; insertions: number; deletions: number }
@@ -82,12 +89,18 @@ export interface ChatSendResult {
 
 export async function sendChatMessage(
   workspaceId: string,
-  text: string
+  text: string,
+  attachments: AttachmentInput[] = []
 ): Promise<ChatSendResult> {
   return (await window.api.invoke(IPC.chatSend, {
     workspaceId,
-    text
+    text,
+    attachments
   })) as ChatSendResult
+}
+
+export async function openAttachment(path: string): Promise<void> {
+  await window.api.invoke(IPC.attachmentsOpen, { path })
 }
 
 // ---- 任务操作 ----

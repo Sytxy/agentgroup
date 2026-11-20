@@ -98,6 +98,33 @@ describe('消息输入框', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 
+  test('pasted files are attached and sent as base64', async () => {
+    const onSend = vi.fn().mockResolvedValue(undefined)
+    render(<Composer agents={[]} onSend={onSend} />)
+    const input = screen.getByRole('textbox', { name: '消息输入' })
+    const file = new File(['hello'], 'note.txt', { type: 'text/plain' })
+    Object.defineProperty(file, 'arrayBuffer', {
+      value: async () => new TextEncoder().encode('hello').buffer
+    })
+
+    fireEvent.paste(input, {
+      clipboardData: {
+        files: [file],
+        items: [{ kind: 'file', getAsFile: () => file }]
+      }
+    })
+
+    expect(await screen.findByText('note.txt')).toBeInTheDocument()
+    fireEvent.change(input, { target: { value: '看附件' } })
+    fireEvent.click(screen.getByRole('button', { name: '发送' }))
+
+    await waitFor(() => {
+      expect(onSend).toHaveBeenCalledWith('看附件', [
+        { name: 'note.txt', mimeType: 'text/plain', data: 'aGVsbG8=' }
+      ])
+    })
+  })
+
   test('send calls onSend with the text and clears the input', async () => {
     const onSend = vi.fn().mockResolvedValue(undefined)
     render(<Composer agents={[agent('a1', 'claude')]} onSend={onSend} />)
@@ -106,7 +133,7 @@ describe('消息输入框', () => {
     fireEvent.change(input, { target: { value: '大家好' } })
     fireEvent.keyDown(input, { key: 'Enter' })
 
-    await waitFor(() => expect(onSend).toHaveBeenCalledWith('大家好'))
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('大家好', []))
     await waitFor(() => expect(input).toHaveValue(''))
   })
 
@@ -144,7 +171,7 @@ describe('消息输入框', () => {
     fireEvent.compositionEnd(input)
     fireEvent.keyDown(input, { key: 'Enter' })
 
-    await waitFor(() => expect(onSend).toHaveBeenCalledWith('你好'))
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith('你好', []))
   })
 
   test('Shift+Enter does not send', () => {

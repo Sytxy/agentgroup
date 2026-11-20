@@ -97,6 +97,27 @@ export interface ChatMessage {
   content: string
   taskId: string | null
   createdAt: string
+  /** 用户消息附带的图片/文件；历史消息没有该字段时视为空数组。 */
+  attachments?: ChatAttachment[]
+}
+
+/** 保存后的附件元数据。 */
+export interface ChatAttachment {
+  id: string
+  name: string
+  mimeType: string
+  size: number
+  /** 主进程保存的绝对路径，Agent 直接读取。 */
+  path: string
+  /** 渲染进程显示图片用的自定义协议地址。 */
+  url: string
+}
+
+/** 渲染进程通过 IPC 传给主进程的附件草稿（base64）。 */
+export interface AttachmentInput {
+  name: string
+  mimeType: string
+  data: string
 }
 
 export type AppEvent =

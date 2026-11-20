@@ -1,12 +1,21 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, protocol, shell } from 'electron'
 import { IPC } from '../shared/ipc'
 import { createAppContext, type AppContext } from './app-context'
+import { serveAttachment } from './attachment-protocol'
 import { createIpcHandlers } from './ipc-handlers'
 import { notifyTaskFinished } from './notifications'
 import { mergeUserPath } from './path-env'
+
+// 附件图片走自定义协议，开发模式（http）和打包后的 file:// 都能加载本地图片。
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'agentgroup-attachment',
+    privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true }
+  }
+])
 
 /** 应用上下文在 whenReady 后创建；will-quit 时用来关闭数据库。 */
 let context: AppContext | null = null
@@ -154,6 +163,7 @@ void app
       wasmPath: resolveWasmPath(),
       worktreesRoot: join(userData, 'worktrees'),
       logsRoot: join(userData, 'logs'),
+      attachmentsRoot: join(userData, 'attachments'),
       openPath: async (path) => {
         // shell.openPath 以空字符串表示成功，非空字符串是系统返回的错误说明。
         const message = await shell.openPath(path)
@@ -174,6 +184,10 @@ void app
       }
     })
     context = appContext
+
+    protocol.handle('agentgroup-attachment', (request) =>
+      serveAttachment(request, appContext.attachmentsRoot)
+    )
 
     for (const [channel, handler] of Object.entries(createIpcHandlers(appContext))) {
       ipcMain.handle(channel, (_event, payload) => handler(payload))

@@ -4,6 +4,7 @@
  * 把数据库、仓储、Git/工作区/任务/合并/分派服务装配成一个可复用的对象。
  * 本文件不依赖 Electron，测试可以传入临时路径直接构造。
  */
+import { dirname, join } from 'node:path'
 import { openDatabase, type Db } from './db/database'
 import { AgentRepo } from './db/agent-repo'
 import { MessageRepo } from './db/message-repo'
@@ -12,6 +13,7 @@ import { WorkspaceRepo } from './db/workspace-repo'
 import { EventBus } from './events'
 import { DefaultAdapterFactory } from './services/agents/adapter-factory'
 import { detectAgents } from './services/agents/agent-detector'
+import { AttachmentService } from './services/attachments/attachment-service'
 import { Dispatcher } from './services/chat/dispatcher'
 import { GitService } from './services/git/git'
 import { SerialQueue } from './services/git/serial-queue'
@@ -31,6 +33,8 @@ export interface AppContextDeps {
   worktreesRoot: string
   /** 任务完整日志的根目录，文件名为 <taskId>.log。 */
   logsRoot: string
+  /** 附件存储根目录；未提供时放在数据库同级的 attachments/。 */
+  attachmentsRoot?: string
   /** 在系统文件管理器中打开路径；生产环境接 Electron shell.openPath。 */
   openPath: (path: string) => Promise<void>
   /** 弹出系统目录选择器；生产环境接 Electron dialog.showOpenDialog。 */
@@ -49,8 +53,10 @@ export interface AppContext {
   taskManager: TaskManager
   mergeCoordinator: MergeCoordinator
   dispatcher: Dispatcher
+  attachments: AttachmentService
   worktreesRoot: string
   logsRoot: string
+  attachmentsRoot: string
   openPath: (path: string) => Promise<void>
   pickFolder?: () => Promise<string | null>
   /** 探测本机 Agent CLI；纯 Node 子进程，不依赖 Electron。 */
@@ -59,6 +65,8 @@ export interface AppContext {
 
 export async function createAppContext(deps: AppContextDeps): Promise<AppContext> {
   const db = await openDatabase(deps.dbPath, deps.wasmPath)
+  const attachmentsRoot = deps.attachmentsRoot ?? join(dirname(deps.dbPath), 'attachments')
+  const attachments = new AttachmentService(attachmentsRoot)
 
   const workspaces = new WorkspaceRepo(db)
   const agents = new AgentRepo(db)
@@ -153,8 +161,10 @@ export async function createAppContext(deps: AppContextDeps): Promise<AppContext
     taskManager,
     mergeCoordinator,
     dispatcher,
+    attachments,
     worktreesRoot: deps.worktreesRoot,
     logsRoot: deps.logsRoot,
+    attachmentsRoot,
     openPath: deps.openPath,
     pickFolder: deps.pickFolder,
     detectAgents: () => detectAgents()

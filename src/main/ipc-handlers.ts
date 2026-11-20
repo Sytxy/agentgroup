@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { IPC } from '../shared/ipc'
 import type {
   AgentConfig,
+  AttachmentInput,
   PermissionProfile,
   Task,
   Workspace
@@ -154,9 +155,25 @@ export function createIpcHandlers(ctx: AppContext): Record<string, IpcHandler> {
 
   // ---- 群聊 ----
 
-  define(IPC.chatSend, (payload) => {
+  define(IPC.chatSend, async (payload) => {
     const input = record(payload)
-    return ctx.dispatcher.send(requiredString(input, 'workspaceId'), requiredString(input, 'text'))
+    const text = typeof input['text'] === 'string' ? input['text'] : ''
+    const attachments = parseAttachments(input)
+    if (text.trim() === '' && attachments.length === 0) {
+      throw new Error('消息不能为空')
+    }
+    const saved = await ctx.attachments.save(attachments)
+    return ctx.dispatcher.send(requiredString(input, 'workspaceId'), text, saved)
+  })
+
+  define(IPC.attachmentsOpen, async (payload) => {
+    const input = record(payload)
+    const path = requiredString(input, 'path')
+    if (!ctx.attachments.owns(path)) {
+      throw new Error('附件路径无效')
+    }
+    await ctx.openPath(path)
+    return { ok: true }
   })
 
   define(IPC.chatHistory, (payload) => {
@@ -267,6 +284,25 @@ function requiredString(input: Record<string, unknown>, field: string): string {
     throw new Error(`参数 ${field} 必须是非空字符串`)
   }
   return value
+}
+
+/** 校验并解析 chat:send 的附件草稿；实际大小/数量由 AttachmentService 再校验。 */
+function parseAttachments(input: Record<string, unknown>): AttachmentInput[] {
+  const value = input['attachments']
+  if (value === undefined) {
+    return []
+  }
+  if (!Array.isArray(value)) {
+    throw new Error('参数 attachments 必须是数组')
+  }
+  return value.map((item) => {
+    const attachment = record(item)
+    return {
+      name: requiredString(attachment, 'name'),
+      mimeType: stringValue(attachment, 'mimeType'),
+      data: requiredString(attachment, 'data')
+    }
+  })
 }
 
 function stringValue(input: Record<string, unknown>, field: string): string {

@@ -105,6 +105,7 @@ export async function openDatabase(filePath: string, wasmPath?: string): Promise
   raw.run(SCHEMA_SQL)
   // 旧版本数据库没有默认 Agent 字段，启动时补齐，避免 SELECT * 读取时缺列。
   ensureColumn(raw, 'workspaces', 'default_agent_id', 'TEXT')
+  ensureColumn(raw, 'messages', 'attachments_json', "TEXT NOT NULL DEFAULT '[]'")
   return new Db(raw, filePath)
 }
 

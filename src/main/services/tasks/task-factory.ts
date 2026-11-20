@@ -90,7 +90,8 @@ export class TaskFactory {
       authorId: null,
       content: task.title,
       taskId: task.id,
-      createdAt
+      createdAt,
+      attachments: []
     }
     this.messages.insert(message)
     this.events.emit({ type: 'task-updated', task })

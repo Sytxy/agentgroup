@@ -133,6 +133,10 @@ function makeFakeContext() {
     markManuallyResolved: vi.fn()
   }
   const dispatcher = { send: vi.fn() }
+  const attachments = {
+    save: vi.fn(async () => []),
+    owns: vi.fn(() => true)
+  }
   const openPath = vi.fn(async () => {})
 
   const ctx = {
@@ -147,8 +151,10 @@ function makeFakeContext() {
     taskManager,
     mergeCoordinator,
     dispatcher,
+    attachments,
     worktreesRoot: '/tmp/worktrees',
     logsRoot: '/tmp/logs',
+    attachmentsRoot: '/tmp/attachments',
     openPath
   } as unknown as AppContext
 
@@ -164,6 +170,7 @@ function makeFakeContext() {
     taskManager,
     mergeCoordinator,
     dispatcher,
+    attachments,
     openPath
   }
 }
@@ -176,7 +183,7 @@ describe('createIpcHandlers', () => {
 
     const result = await handlers[IPC.chatSend]!({ workspaceId: 'w1', text: 'hi @a1' })
 
-    expect(dispatcher.send).toHaveBeenCalledWith('w1', 'hi @a1')
+    expect(dispatcher.send).toHaveBeenCalledWith('w1', 'hi @a1', [])
     expect(result).toEqual({ message, tasks: [task] })
   })
 

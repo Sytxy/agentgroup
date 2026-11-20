@@ -3,6 +3,7 @@
 // 聊天消息，并把对应任务卡紧凑地收在回复下方，避免群聊被状态胶囊和独立卡片切碎。
 import { useEffect, useRef, useState } from 'react'
 import type { AgentConfig, ChatMessage, Task } from '../../../shared/types'
+import { openAttachment } from '../api'
 import MessageContent from './MessageContent'
 import TaskCard from './TaskCard'
 
@@ -308,6 +309,45 @@ export default function ChatTimeline({
                 </div>
                 <div className="message-user-bubble">
                   <MessageContent text={message.content} />
+                  {message.attachments !== undefined && message.attachments.length > 0 && (
+                    <div className="message-attachments">
+                      {message.attachments.map((attachment) => {
+                        const image = attachment.mimeType.startsWith('image/')
+                        return (
+                          <button
+                            key={attachment.id}
+                            type="button"
+                            className={
+                              image
+                                ? 'message-attachment message-attachment-image'
+                                : 'message-attachment message-attachment-file'
+                            }
+                            aria-label={`打开附件 ${attachment.name}`}
+                            title={attachment.name}
+                            onClick={() => {
+                              void openAttachment(attachment.path).catch(() => {
+                                // 文件被移动/删除时保持聊天可用，不弹额外错误
+                              })
+                            }}
+                          >
+                            {image ? (
+                              <img src={attachment.url} alt={attachment.name} />
+                            ) : (
+                              <>
+                                <AttachmentIcon />
+                                <span className="message-attachment-name">
+                                  {attachment.name}
+                                </span>
+                                <span className="message-attachment-size">
+                                  {formatBytes(attachment.size)}
+                                </span>
+                              </>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
                 <div className="message-actions message-actions-user">
                   <button
@@ -358,6 +398,26 @@ function EditIcon(): React.JSX.Element {
       <path d="M13.5 6.5l4 4" />
     </svg>
   )
+}
+
+/** 文件附件的小图标。 */
+function AttachmentIcon(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
+      <path d="M14 3v5h5" />
+    </svg>
+  )
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 /** 头像用名称首字符，中文取第一个字，空名用问号。 */

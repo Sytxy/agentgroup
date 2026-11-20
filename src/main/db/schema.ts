@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS messages (
   author_id TEXT,
   content TEXT NOT NULL,
   task_id TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  attachments_json TEXT NOT NULL DEFAULT '[]'
 );
 `

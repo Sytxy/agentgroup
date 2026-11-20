@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type {
   AgentConfig,
+  AttachmentInput,
   ChatMessage,
   Task,
   TaskStatus,
@@ -327,11 +328,11 @@ export default function App(): React.JSX.Element {
 
   // 发送消息后把返回的消息与任务并入本地状态；错误交给 Composer 展示。
   const handleSend = useCallback(
-    async (text: string): Promise<void> => {
+    async (text: string, attachments: AttachmentInput[] = []): Promise<void> => {
       if (selectedId === null) {
         return
       }
-      const result = await sendChatMessage(selectedId, text)
+      const result = await sendChatMessage(selectedId, text, attachments)
       setMessages((current) =>
         current.some((message) => message.id === result.message.id)
           ? current

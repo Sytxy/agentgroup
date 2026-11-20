@@ -183,6 +183,39 @@ describe('群聊时间线', () => {
     ).toBeInTheDocument()
   })
 
+  test('用户消息附件会显示并可打开', async () => {
+    const invoke = vi.fn(async () => ({ ok: true }))
+    window.api = { invoke, onEvent: vi.fn(() => () => {}) }
+    const attachment = {
+      id: 'att-1',
+      name: 'screen.png',
+      mimeType: 'image/png',
+      size: 2048,
+      path: '/tmp/screen.png',
+      url: 'agentgroup-attachment://att-1/screen.png'
+    }
+
+    render(
+      <ChatTimeline
+        messages={[message('u1', 'user', '看这个', { attachments: [attachment] })]}
+        tasks={[]}
+        agents={[]}
+      />
+    )
+
+    const user = screen.getByTestId('message-user')
+    expect(within(user).getByRole('img', { name: 'screen.png' })).toHaveAttribute(
+      'src',
+      'agentgroup-attachment://att-1/screen.png'
+    )
+    fireEvent.click(within(user).getByRole('button', { name: '打开附件 screen.png' }))
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('attachments:open', {
+        path: '/tmp/screen.png'
+      })
+    })
+  })
+
   test('长 Agent 输出不再套系统胶囊框', () => {
     render(
       <ChatTimeline
@@ -396,7 +429,8 @@ describe('实时事件与发送', () => {
     await waitFor(() => {
       expect(api.invoke).toHaveBeenCalledWith('chat:send', {
         workspaceId: 'w1',
-        text: '大家好'
+        text: '大家好',
+        attachments: []
       })
     })
     expect(await screen.findByText('大家好')).toBeInTheDocument()
