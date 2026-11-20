@@ -216,6 +216,28 @@ describe('群聊时间线', () => {
     })
   })
 
+  test('running task shows elapsed time and queued task explains why it waits', () => {
+    const startedAt = new Date(Date.now() - 65_000).toISOString()
+    render(
+      <ChatTimeline
+        messages={[
+          message('card-1', 'task-card', '能打win版本的吗？', { taskId: 't1' }),
+          message('card-2', 'task-card', '好了吗', { taskId: 't2' })
+        ]}
+        tasks={[
+          { ...task('t1', 'running'), startedAt },
+          task('t2', 'queued')
+        ]}
+        agents={[agent('a1', 'claude')]}
+      />
+    )
+
+    const cards = screen.getAllByTestId('message-task-card')
+    expect(cards[0]).toHaveTextContent('正在执行')
+    expect(cards[0]).toHaveTextContent('已运行')
+    expect(cards[1]).toHaveTextContent('排队中… 等待 claude 完成当前任务')
+  })
+
   test('长 Agent 输出不再套系统胶囊框', () => {
     render(
       <ChatTimeline

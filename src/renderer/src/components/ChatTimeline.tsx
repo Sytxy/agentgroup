@@ -141,6 +141,17 @@ export default function ChatTimeline({
 
               // 还没有最终回复的任务也用聊天消息呈现，避免运行中又出现一张大卡片
               const taskAgent = agentsById.get(task.agentId)
+              const blockingTask =
+                task.status === 'queued'
+                  ? tasks.find(
+                      (candidate) =>
+                        candidate.id !== task.id &&
+                        candidate.agentId === task.agentId &&
+                        (candidate.status === 'running' ||
+                          candidate.status === 'preparing' ||
+                          candidate.status === 'merging')
+                    )
+                  : undefined
               return (
                 <article
                   key={message.id}
@@ -166,7 +177,14 @@ export default function ChatTimeline({
                       {formatMessageTime(message.createdAt)}
                     </span>
                   </div>
-                  <MessageContent text={taskStatusText(task)} />
+                  <TaskStatusLine
+                    task={task}
+                    blockingAgentName={
+                      blockingTask === undefined
+                        ? undefined
+                        : (agentsById.get(blockingTask.agentId)?.name ?? '当前成员')
+                    }
+                  />
                   <TaskCard
                     task={task}
                     agent={taskAgent}
@@ -452,19 +470,54 @@ function presetLabel(agent: AgentConfig): string {
 }
 
 /** 没有最终 Agent 回复时，任务行的正文显示当前状态或已有摘要。 */
-function taskStatusText(task: Task): string {
+function TaskStatusLine({
+  task,
+  blockingAgentName
+}: {
+  task: Task
+  blockingAgentName?: string
+}): React.JSX.Element {
+  const live =
+    task.status === 'running' || task.status === 'preparing' || task.status === 'merging'
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (!live) {
+      return
+    }
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [live, task.startedAt])
+
+  return (
+    <div className="task-status-line">
+      {live && <span className="task-active-dot" aria-hidden="true" />}
+      <MessageContent text={taskStatusText(task, now, blockingAgentName)} />
+    </div>
+  )
+}
+
+function taskStatusText(
+  task: Task,
+  now: number = Date.now(),
+  blockingAgentName?: string
+): string {
   if (task.summary !== null && task.summary !== '') {
     return task.summary
   }
+  const elapsed = elapsedText(task, now)
   switch (task.status) {
     case 'queued':
-      return '等待执行…'
+      return blockingAgentName === undefined
+        ? '排队中…'
+        : `排队中… 等待 ${blockingAgentName} 完成当前任务`
     case 'preparing':
-      return '正在准备环境…'
+      return `正在准备环境…${elapsed}`
     case 'running':
-      return '正在执行…'
+      return `正在执行…${elapsed}`
     case 'merging':
-      return '正在合并…'
+      return `正在合并…${elapsed}`
     case 'merged':
       return '无代码改动'
     case 'done':
@@ -484,6 +537,26 @@ function taskStatusText(task: Task): string {
     default:
       return '任务状态更新'
   }
+}
+
+function elapsedText(task: Task, now: number): string {
+  if (task.startedAt === null) {
+    return ''
+  }
+  const started = Date.parse(task.startedAt)
+  if (!Number.isFinite(started)) {
+    return ''
+  }
+  const seconds = Math.max(0, Math.floor((now - started) / 1000))
+  if (seconds < 60) {
+    return ` 已运行 ${seconds}s`
+  }
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) {
+    return ` 已运行 ${minutes}m ${seconds % 60}s`
+  }
+  const hours = Math.floor(minutes / 60)
+  return ` 已运行 ${hours}h ${minutes % 60}m`
 }
 
 function formatMessageTime(iso: string): string {

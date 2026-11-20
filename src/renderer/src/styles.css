@@ -1908,6 +1908,35 @@ select:focus-visible {
   box-shadow: none;
 }
 
+/* 运行中的任务只显示活动点和已运行时长；不展示工具调用细节 */
+.task-status-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.task-active-dot {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  margin-top: 0.62em;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: task-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes task-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .task-card-inline-head {
   display: flex;
   align-items: center;
