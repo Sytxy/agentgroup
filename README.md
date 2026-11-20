@@ -116,7 +116,7 @@ App 数据位于 `~/Library/Application Support/agentgroup/`（数据库、workt
 
    如果整条消息没有 @ 任何人，可以在项目设置的「默认 Agent（未 @ 时）」里指定一个成员；未设置时消息只留在群里，不创建任务。
 2. 消息中的每个成员会并行创建一个任务：
-   - 从 integration 的当前提交创建分支 `agent/<taskId>-<slug>`；
+   - 从 integration 的当前提交创建分支 `<Agent 类型>/<taskId>`（例如 `claude/<taskId>`、`codex/<taskId>`；自定义 Agent 使用成员名）；
    - 在 App 数据目录下创建独立 worktree；
    - 先执行项目设置里的 **setup 复制**（把 `.env` 等未提交文件从仓库根复制进 worktree），再执行 **setup 命令**（例如 `pnpm install`）；
    - 在该 worktree 内启动 Agent CLI，并把进度、结果和日志回传到群里。

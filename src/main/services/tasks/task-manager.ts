@@ -477,7 +477,21 @@ export class TaskManager {
         this.emitTask(task.id)
       } else {
         worktreePath = join(this.worktreesRoot, task.workspaceId, task.id)
-        const branch = `agent/${task.id}-${branchSlug(task.title)}`
+        // 分支按 Agent 类型分组，例如 claude/<taskId>、codex/<taskId>；
+        // 自定义 Agent 没有固定类型，用成员名作前缀，中文名回退为 custom。
+        const memberSlug = agent.name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+          .slice(0, 24)
+          .replace(/-+$/g, '')
+        const branchPrefix =
+          agent.preset === 'custom'
+            ? memberSlug === ''
+              ? 'custom'
+              : memberSlug
+            : agent.preset
+        const branch = `${branchPrefix}/${task.id}`
         // baseRef 记录任务启动时 integration 分支的确切提交，后面按其创建分支
         const baseRef = await this.git.revParse(workspace.repoPath, workspace.integrationBranch)
 
@@ -797,17 +811,6 @@ function composePrompt(agent: AgentConfig, task: Task): string {
   parts.push(`你的修改范围：${agent.pathScope.join('、')}；为空表示不限`)
   parts.push(task.prompt)
   return parts.join('\n\n')
-}
-
-/** 任务标题转分支 slug：小写、非字母数字折叠为 '-'、去首尾 '-'、最多 30 字符 */
-function branchSlug(title: string): string {
-  const slug = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 30)
-    .replace(/-+$/g, '')
-  return slug === '' ? 'task' : slug
 }
 
 function terminalMessage(status: TaskStatus, title: string, summary: string | null): string {

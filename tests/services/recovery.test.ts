@@ -257,7 +257,7 @@ describe('crash recovery', () => {
     await waitFor(() => tasks.get(task.id)?.status === 'done')
 
     const stored = tasks.get(task.id) as Task
-    expect(stored.branch).toBe(`agent/${id}-retry-cleanup`)
+    expect(stored.branch).toBe(`claude/${id}`)
     expect(stored.worktreePath).toBe(worktreePath)
     // 旧分支已删除，新分支由全新 worktree 创建
     expect(await git.branchExists(tempRepo.path, staleBranch)).toBe(false)

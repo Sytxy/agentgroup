@@ -184,8 +184,8 @@ describe('TaskManager', () => {
     expect(stored.startedAt).toEqual(expect.any(String))
     expect(stored.finishedAt).toEqual(expect.any(String))
 
-    // 分支与 worktree 规则：agent/<taskId>-<slug>，路径 <worktreesRoot>/<workspaceId>/<taskId>
-    expect(stored.branch).toBe(`agent/${task.id}-implement-login`)
+    // 分支与 worktree 规则：<成员名>/<taskId>，路径 <worktreesRoot>/<workspaceId>/<taskId>
+    expect(stored.branch).toBe(`claude/${task.id}`)
     expect(stored.worktreePath).toBe(join(worktreesRoot, workspace.id, task.id))
     // baseRef 记录任务启动时 integration 分支的确切提交
     expect(stored.baseRef).toBe(integrationHead)
@@ -526,6 +526,17 @@ describe('TaskManager', () => {
     // 不再把原始英文日志和退出码整段塞给用户
     expect(stored.summary).not.toContain('Not logged in')
     expect(stored.exitCode).toBe(1)
+  })
+
+  test('branch prefix follows the preset even when the member has a custom name', async () => {
+    insertAgent({ name: 'claude2', preset: 'claude' })
+    const task = insertTask({ title: 'Naming' })
+
+    const manager = createManager(new FakeAdapter())
+    manager.start()
+    await waitFor(() => tasks.get(task.id)?.status === 'done')
+
+    expect(tasks.get(task.id)?.branch).toBe(`claude/${task.id}`)
   })
 
   test('prompt includes role, path scope and task text', async () => {
