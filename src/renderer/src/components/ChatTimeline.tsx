@@ -1,7 +1,7 @@
 // 群聊时间线：按消息类型渲染用户、Agent、系统与任务卡片四类消息。
 // 任务的短状态/进度由任务卡片承载；Agent 的长回复渲染成带头像、名称和时间的
 // 聊天消息，并把对应任务卡紧凑地收在回复下方，避免群聊被状态胶囊和独立卡片切碎。
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { AgentConfig, ChatMessage, Task } from '../../../shared/types'
 import MessageContent from './MessageContent'
 import TaskCard from './TaskCard'
@@ -21,6 +21,8 @@ interface ChatTimelineProps {
   activeResolveByParent?: Map<string, Task>
   /** 点击 Agent 消息的“回复”时，把 @成员 预填到输入框。 */
   onReply?: (agentName: string) => void
+  /** 点击用户消息的“重新编辑”时，把原文放回输入框。 */
+  onEditMessage?: (text: string) => void
 }
 
 export default function ChatTimeline({
@@ -30,12 +32,41 @@ export default function ChatTimeline({
   userName = '我',
   progress = {},
   activeResolveByParent = new Map<string, Task>(),
-  onReply
+  onReply,
+  onEditMessage
 }: ChatTimelineProps): React.JSX.Element {
   const listRef = useRef<HTMLDivElement>(null)
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
   const agentNames = new Map(agents.map((agent) => [agent.id, agent.name]))
   const agentsById = new Map(agents.map((agent) => [agent.id, agent]))
   const tasksById = new Map(tasks.map((task) => [task.id, task]))
+
+  useEffect(() => {
+    return () => {
+      if (copyTimer.current !== null) {
+        clearTimeout(copyTimer.current)
+      }
+    }
+  }, [])
+
+  const handleCopy = (message: ChatMessage): void => {
+    if (navigator.clipboard === undefined) {
+      return
+    }
+    void navigator.clipboard
+      .writeText(message.content)
+      .then(() => {
+        setCopiedId(message.id)
+        if (copyTimer.current !== null) {
+          clearTimeout(copyTimer.current)
+        }
+        copyTimer.current = setTimeout(() => setCopiedId(null), 1500)
+      })
+      .catch(() => {
+        // 剪贴板不可用时保持原按钮状态，不打断聊天
+      })
+  }
 
   // 每个任务最后一条 Agent 回复 id：任务卡只内嵌在这条回复下面，避免重复展示。
   const lastReplyByTask = new Map<string, string>()
@@ -186,15 +217,26 @@ export default function ChatTimeline({
                     <span className="message-time">
                       {formatMessageTime(message.createdAt)}
                     </span>
-                    {onReply !== undefined && (
+                    <div className="message-head-actions">
+                      {onReply !== undefined && (
+                        <button
+                          type="button"
+                          className="message-reply-action"
+                          onClick={() => onReply(authorName)}
+                        >
+                          ↩ 回复
+                        </button>
+                      )}
                       <button
                         type="button"
-                        className="message-reply-action"
-                        onClick={() => onReply(authorName)}
+                        className="message-action"
+                        aria-label="复制消息"
+                        onClick={() => handleCopy(message)}
                       >
-                        ↩ 回复
+                        <CopyIcon />
+                        <span>{copiedId === message.id ? '已复制' : '复制'}</span>
                       </button>
-                    )}
+                    </div>
                   </div>
 
                   {quotedUser !== undefined && (
@@ -267,12 +309,54 @@ export default function ChatTimeline({
                 <div className="message-user-bubble">
                   <MessageContent text={message.content} />
                 </div>
+                <div className="message-actions message-actions-user">
+                  <button
+                    type="button"
+                    className="message-action"
+                    aria-label="复制消息"
+                    onClick={() => handleCopy(message)}
+                  >
+                    <CopyIcon />
+                    <span>{copiedId === message.id ? '已复制' : '复制'}</span>
+                  </button>
+                  {onEditMessage !== undefined && (
+                    <button
+                      type="button"
+                      className="message-action"
+                      aria-label="重新编辑消息"
+                      onClick={() => onEditMessage(message.content)}
+                    >
+                      <EditIcon />
+                      <span>重新编辑</span>
+                    </button>
+                  )}
+                </div>
               </article>
             )
           })
         )}
       </div>
     </div>
+  )
+}
+
+/** 复制消息的小图标。 */
+function CopyIcon(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M5 15V5a2 2 0 0 1 2-2h10" />
+    </svg>
+  )
+}
+
+/** 重新编辑的小图标。 */
+function EditIcon(): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 20h4L19 9l-4-4L4 16v4Z" />
+      <path d="M13.5 6.5l4 4" />
+    </svg>
   )
 }
 

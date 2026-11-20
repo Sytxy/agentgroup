@@ -22,6 +22,21 @@ describe('MessageContent', () => {
     expect(screen.getAllByRole('listitem')).toHaveLength(2)
   })
 
+  test('renders headings, tables, quotes and rules', () => {
+    render(
+      <MessageContent
+        text={'## 标题\n\n| 维度 | 说明 |\n| --- | --- |\n| 身份 | **成员** |\n\n> 引用文字\n\n---'}
+      />
+    )
+
+    expect(screen.getByRole('heading', { level: 2, name: '标题' })).toBeInTheDocument()
+    expect(screen.getByRole('table')).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: '维度' })).toBeInTheDocument()
+    expect(screen.getByRole('cell', { name: '成员' })).toBeInTheDocument()
+    expect(screen.getByText('引用文字')).toBeInTheDocument()
+    expect(document.querySelector('hr')).not.toBeNull()
+  })
+
   test('renders fenced code blocks without interpreting inner markdown', () => {
     render(<MessageContent text={'说明：\n\n```ts\nconst value = `**not bold**`\n```'} />)
 

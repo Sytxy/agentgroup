@@ -149,6 +149,40 @@ describe('群聊时间线', () => {
     expect(user).toHaveTextContent('你')
   })
 
+  test('已发送消息可以复制，用户消息可以重新编辑', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true
+    })
+    const onEditMessage = vi.fn()
+
+    render(
+      <ChatTimeline
+        messages={[
+          message('u1', 'user', '请修复登录'),
+          message('a1', 'agent', '收到，开始处理', { authorId: 'a1' })
+        ]}
+        tasks={[]}
+        agents={[agent('a1', 'claude')]}
+        onEditMessage={onEditMessage}
+      />
+    )
+
+    const user = screen.getByTestId('message-user')
+    fireEvent.click(within(user).getByRole('button', { name: '复制消息' }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('请修复登录'))
+    await waitFor(() => expect(within(user).getByText('已复制')).toBeInTheDocument())
+
+    fireEvent.click(within(user).getByRole('button', { name: '重新编辑消息' }))
+    expect(onEditMessage).toHaveBeenCalledWith('请修复登录')
+
+    const agentMessage = screen.getByTestId('message-agent')
+    expect(
+      within(agentMessage).getByRole('button', { name: '复制消息' })
+    ).toBeInTheDocument()
+  })
+
   test('长 Agent 输出不再套系统胶囊框', () => {
     render(
       <ChatTimeline

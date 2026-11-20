@@ -510,6 +510,12 @@ export default function App(): React.JSX.Element {
                   nonce: Date.now()
                 })
               }
+              onEditMessage={(text) =>
+                setComposerSeed({
+                  text,
+                  nonce: Date.now()
+                })
+              }
             />
             <Composer
               agents={agents}
