@@ -1,0 +1,62 @@
+name: Release
+
+# 只在推送版本 tag 时发布，避免普通提交触发对外发布。
+on:
+  push:
+    tags:
+      - "v*"
+
+# 创建 Release 和上传附件需要写权限。
+permissions:
+  contents: write
+
+jobs:
+  build-mac:
+    # GitHub 的 macOS runner 为 arm64，产物即 README 中的 Apple Silicon dmg。
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 8
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Verify tag matches package.json version
+        # 产物文件名取自 package.json 的 version；tag 与它不一致时，
+        # 会出现 Release 标着 vX 却挂着 vY dmg 的情况，因此直接中断。
+        run: |
+          node -e '
+            const expected = "v" + require("./package.json").version;
+            if (expected !== process.env.GITHUB_REF_NAME) {
+              console.error(`tag ${process.env.GITHUB_REF_NAME} does not match package.json ${expected}`);
+              process.exit(1);
+            }
+          '
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build macOS dmg
+        run: pnpm build:mac
+        env:
+          # 与 electron-builder.yml 的 identity: null 一致：CI 不做签名和公证。
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+      - name: Create release and upload dmg
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 支持重跑：Release 已存在时复用，附件用 --clobber 覆盖。
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" \
+                 --title "AgentGroup $GITHUB_REF_NAME" \
+                 --generate-notes
+          gh release upload "$GITHUB_REF_NAME" dist/*.dmg --clobber
