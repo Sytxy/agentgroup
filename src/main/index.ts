@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain, Notification, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell } from 'electron'
 import { IPC } from '../shared/ipc'
 import { createAppContext, type AppContext } from './app-context'
 import { createIpcHandlers } from './ipc-handlers'
@@ -31,10 +31,24 @@ function resolveWasmPath(): string | undefined {
   }
 }
 
+/**
+ * 显式安装 macOS 应用菜单。
+ * role: 'appMenu' 提供 About / Hide / Quit（Cmd+Q），editMenu 提供复制粘贴快捷键，
+ * windowMenu 提供最小化/缩放。没有应用菜单时 Cmd+Q 可能不生效。
+ */
+function installApplicationMenu(): void {
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      { role: 'appMenu' },
+      { role: 'editMenu' },
+      { role: 'windowMenu' }
+    ])
+  )
+}
+
 // 创建应用主窗口：开发模式加载 electron-vite 提供的渲染进程地址，
 // 生产模式加载构建产物中的 index.html。
-function createWindow(): BrowserWindow {
-  const mainWindow = new BrowserWindow({
+function createWindow(): BrowserWindow {  const mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     title: 'AgentGroup',
@@ -133,6 +147,7 @@ void app
   .then(async () => {
     // 必须先补齐 PATH，再创建 app context 或启动任何 Agent 子进程。
     await applyLoginShellPath()
+    installApplicationMenu()
     const userData = app.getPath('userData')
     const appContext = await createAppContext({
       dbPath: join(userData, 'agentgroup.db'),
