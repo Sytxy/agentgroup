@@ -33,7 +33,7 @@ pnpm build:mac  # 构建并打包 dmg
 
 打包完成后产物位于 `dist/`：
 
-- Apple Silicon：`dist/AgentGroup-0.1.0-arm64.dmg`
+- Apple Silicon：`dist/AgentGroup-0.1.1-arm64.dmg`
 - Intel：在 Intel 机器上构建会生成对应的 x64 dmg
 
 打开 dmg，把 `AgentGroup.app` 拖到「应用程序」即可。当前为本地未签名构建，首次打开的提示见「常见问题」。

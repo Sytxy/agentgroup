@@ -1,6 +1,6 @@
 {
   "name": "agentgroup",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AgentGroup - a group chat for AI coding agents",
   "author": "AgentGroup",
   "main": "./out/main/index.js",
