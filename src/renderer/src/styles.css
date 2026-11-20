@@ -746,6 +746,12 @@ select:focus-visible {
   font-weight: 700;
 }
 
+.message-context {
+  color: var(--faint);
+  font-size: 0.64rem;
+  white-space: nowrap;
+}
+
 .message-time {
   color: var(--faint);
   font-family: var(--font-mono);
@@ -850,6 +856,12 @@ select:focus-visible {
 .composer:focus-within {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 8%, transparent), var(--shadow-soft);
+}
+
+.composer-identity {
+  color: var(--faint);
+  font-size: 0.66rem;
+  line-height: 1.2;
 }
 
 .composer-input {

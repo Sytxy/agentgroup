@@ -26,6 +26,18 @@ afterEach(() => {
 })
 
 describe('消息输入框', () => {
+  test('shows who is posting as', () => {
+    render(
+      <Composer
+        agents={[]}
+        userName="张三"
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    )
+
+    expect(screen.getByText('以「张三」的身份发送')).toBeInTheDocument()
+  })
+
   test('typing @ shows enabled agents and inserts the selected name', () => {
     render(
       <Composer

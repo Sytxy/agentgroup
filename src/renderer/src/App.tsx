@@ -500,7 +500,7 @@ export default function App(): React.JSX.Element {
               progress={progress}
               activeResolveByParent={activeResolveByParent}
             />
-            <Composer agents={agents} onSend={handleSend} />
+            <Composer agents={agents} userName={userName} onSend={handleSend} />
           </section>
 
           {agentPanelOpen && (

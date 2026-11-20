@@ -6,6 +6,8 @@ import type { AgentConfig } from '../../../shared/types'
 interface ComposerProps {
   agents: AgentConfig[]
   disabled?: boolean
+  /** 发送者显示名，用于“以谁的身份发送”。 */
+  userName?: string
   onSend: (text: string) => Promise<void>
 }
 
@@ -33,6 +35,7 @@ function mentionAt(value: string, caret: number): MentionContext | null {
 export default function Composer({
   agents,
   disabled = false,
+  userName = '我',
   onSend
 }: ComposerProps): React.JSX.Element {
   const [value, setValue] = useState('')
@@ -180,6 +183,8 @@ export default function Composer({
           ))}
         </ul>
       )}
+
+      <div className="composer-identity">以「{userName}」的身份发送</div>
 
       <textarea
         ref={textareaRef}

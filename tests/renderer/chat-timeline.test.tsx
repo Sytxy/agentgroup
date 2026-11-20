@@ -142,7 +142,9 @@ describe('群聊时间线', () => {
     // Agent 消息展示成员名而不是 id
     const agentMessage = screen.getByTestId('message-agent')
     expect(agentMessage).toHaveTextContent('claude')
+    expect(agentMessage).toHaveTextContent('你的智能体')
     expect(agentMessage).toHaveTextContent('收到，开始处理')
+    expect(user).toHaveTextContent('你')
   })
 
   test('长 Agent 输出不再套系统胶囊框', () => {

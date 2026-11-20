@@ -105,6 +105,7 @@ export default function ChatTimeline({
                     <span className="message-author">
                       {taskAgent?.name ?? '已删除的成员'}
                     </span>
+                    <span className="message-context">你的智能体</span>
                     {taskAgent !== undefined && (
                       <span className="message-badge">{presetLabel(taskAgent)}</span>
                     )}
@@ -155,6 +156,7 @@ export default function ChatTimeline({
                       {agentInitial(authorAgent?.name ?? authorName)}
                     </span>
                     <span className="message-author">{authorName}</span>
+                    <span className="message-context">你的智能体</span>
                     {authorAgent !== undefined && (
                       <span className="message-badge">{presetLabel(authorAgent)}</span>
                     )}
@@ -220,6 +222,7 @@ export default function ChatTimeline({
                     </svg>
                   </span>
                   <span className="message-author">{userName}</span>
+                  <span className="message-context">你</span>
                   <span className="message-time">
                     {formatMessageTime(message.createdAt)}
                   </span>
