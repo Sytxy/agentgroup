@@ -330,6 +330,19 @@ describe('MergeCoordinator', () => {
     expect(existsSync(task.worktreePath as string)).toBe(false)
   })
 
+  test('task with no changes keeps a non-empty agent summary', async () => {
+    insertAgent()
+    const task = await createDoneTask()
+    tasks.update(task.id, { summary: '这是项目分析结果' })
+
+    await coordinator.mergeTask(task.id)
+
+    expect(tasks.get(task.id)).toMatchObject({
+      status: 'merged',
+      summary: '这是项目分析结果'
+    })
+  })
+
   test('conflict marks task conflict, aborts merge and later tasks still merge', async () => {
     insertAgent()
     const conflicting = await createConflictTask()

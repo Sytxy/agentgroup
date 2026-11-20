@@ -1,4 +1,4 @@
-// 左侧工作区列表：切换当前工作区。v1 只登记一个工作区，但列表结构为多工作区预留。
+// 左侧工作区列表：切换当前工作区，并提供新建项目的入口。
 import { APP_NAME } from '../../../shared/constants'
 import type { Workspace } from '../../../shared/types'
 
@@ -6,12 +6,14 @@ interface SidebarProps {
   workspaces: Workspace[]
   selectedId: string | null
   onSelect: (workspaceId: string) => void
+  onCreate: () => void
 }
 
 export default function Sidebar({
   workspaces,
   selectedId,
-  onSelect
+  onSelect,
+  onCreate
 }: SidebarProps): React.JSX.Element {
   return (
     <aside className="sidebar">
@@ -20,6 +22,13 @@ export default function Sidebar({
         <span className="sidebar-brand-name">{APP_NAME}</span>
       </div>
       <p className="sidebar-tagline">多 Agent 协作台</p>
+      <div className="sidebar-section-head">
+        <span>项目</span>
+        <span>{workspaces.length}</span>
+      </div>
+      <button type="button" className="workspace-add" onClick={onCreate}>
+        <span aria-hidden="true">＋</span> 新建项目
+      </button>
       <nav className="workspace-list" aria-label="项目列表">
         {workspaces.map((workspace) => (
           <button
@@ -33,8 +42,13 @@ export default function Sidebar({
             aria-current={workspace.id === selectedId ? 'true' : undefined}
             onClick={() => onSelect(workspace.id)}
           >
-            <span className="workspace-item-name">{workspace.name}</span>
-            <span className="workspace-item-path">{workspace.repoPath}</span>
+            <span className="workspace-item-avatar" aria-hidden="true">
+              {workspaceInitial(workspace.name)}
+            </span>
+            <span className="workspace-item-text">
+              <span className="workspace-item-name">{workspace.name}</span>
+              <span className="workspace-item-path">{workspace.repoPath}</span>
+            </span>
           </button>
         ))}
       </nav>
@@ -44,4 +58,9 @@ export default function Sidebar({
       </footer>
     </aside>
   )
+}
+
+/** 项目头像用名称首字，中文取第一个字，空名用“项”。 */
+function workspaceInitial(name: string): string {
+  return Array.from(name.trim())[0]?.toUpperCase() ?? '项'
 }

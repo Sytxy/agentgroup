@@ -275,9 +275,12 @@ export class MergeCoordinator {
 
     const files = await this.git.changedFiles(task.worktreePath, task.baseRef)
     if (files.length === 0) {
-      // 没有代码改动时不需要 merge commit，直接结束并清理现场
+      // 没有代码改动时不需要 merge commit，直接结束并清理现场；
+      // 但纯分析/问答任务的 Agent 文本结果必须保留，不能被占位摘要覆盖。
+      const summary =
+        task.summary !== null && task.summary !== '' ? task.summary : '无代码改动'
       await this.removeWorktree(workspace, task)
-      this.updateTask(task.id, { status: 'merged', summary: '无代码改动' })
+      this.updateTask(task.id, { status: 'merged', summary })
       this.emitTask(task.id)
       // 父任务已进入 integration，委派子任务现在才能基于包含父任务改动的代码启动
       this.releaseDelegatedChildren(task)

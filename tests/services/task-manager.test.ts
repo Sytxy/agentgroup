@@ -539,6 +539,27 @@ describe('TaskManager', () => {
     expect(tasks.get(task.id)?.branch).toBe(`claude/${task.id}`)
   })
 
+  test('keeps a text-only agent result and posts it as an agent message', async () => {
+    insertAgent()
+    const adapter = new FakeAdapter({
+      steps: [{ event: { type: 'final', summary: '这是项目分析结果' } }]
+    })
+    const task = insertTask({ title: 'Analyze' })
+
+    const manager = createManager(adapter)
+    manager.start()
+    await waitFor(() => tasks.get(task.id)?.status === 'done')
+
+    const stored = tasks.get(task.id) as Task
+    expect(stored.summary).toBe('这是项目分析结果')
+
+    const agentMessage = messages
+      .listByWorkspace(workspace.id)
+      .find((message) => message.kind === 'agent' && message.taskId === task.id)
+    expect(agentMessage?.content).toBe('这是项目分析结果')
+    expect(agentMessage?.authorId).toBe('agent-claude')
+  })
+
   test('prompt includes role, path scope and task text', async () => {
     insertAgent({
       rolePrompt: '你是前端专家',

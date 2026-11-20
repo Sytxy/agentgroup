@@ -99,6 +99,8 @@ export default function App(): React.JSX.Element {
   // task-progress 只保留最近几行，任务进入终态后删除，避免长时间运行时无限增长
   const [progress, setProgress] = useState<Record<string, string[]>>({})
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // 已有项目时从侧边栏打开“新建项目”整页表单
+  const [setupOpen, setSetupOpen] = useState(false)
   // 成员面板默认收起，把宽度让给聊天区；点顶部“成员”再展开。
   const [agentPanelOpen, setAgentPanelOpen] = useState(false)
   const [userName, setUserName] = useState(readUserName)
@@ -399,6 +401,7 @@ export default function App(): React.JSX.Element {
         workspaces={workspaces}
         selectedId={selected.id}
         onSelect={setSelectedId}
+        onCreate={() => setSetupOpen(true)}
       />
 
       <main className="workspace">
@@ -529,6 +532,18 @@ export default function App(): React.JSX.Element {
           />
         )}
       </main>
+
+      {setupOpen && (
+        <div className="setup-overlay">
+          <WorkspaceSetup
+            onCreated={async (created) => {
+              await handleCreated(created)
+              setSetupOpen(false)
+            }}
+            onCancel={() => setSetupOpen(false)}
+          />
+        </div>
+      )}
     </div>
   )
 }

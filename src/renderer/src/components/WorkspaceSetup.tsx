@@ -6,10 +6,13 @@ import { createWorkspace, pickFolder } from '../api'
 
 interface WorkspaceSetupProps {
   onCreated: (workspace: Workspace) => void | Promise<void>
+  /** 已有项目时从侧边栏进入，需要提供取消返回；首次创建没有可返回的界面。 */
+  onCancel?: () => void
 }
 
 export default function WorkspaceSetup({
-  onCreated
+  onCreated,
+  onCancel
 }: WorkspaceSetupProps): React.JSX.Element {
   const [name, setName] = useState('')
   const [repoPath, setRepoPath] = useState('')
@@ -169,9 +172,21 @@ export default function WorkspaceSetup({
           </p>
         )}
 
-        <button className="setup-submit" type="submit" disabled={submitting}>
-          {submitting ? '添加中…' : '添加项目'}
-        </button>
+        <div className="setup-actions">
+          <button className="setup-submit" type="submit" disabled={submitting}>
+            {submitting ? '添加中…' : '添加项目'}
+          </button>
+          {onCancel !== undefined && (
+            <button
+              className="setup-cancel"
+              type="button"
+              disabled={submitting}
+              onClick={onCancel}
+            >
+              取消
+            </button>
+          )}
+        </div>
       </form>
     </div>
   )

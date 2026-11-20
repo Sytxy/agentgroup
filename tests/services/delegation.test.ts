@@ -130,10 +130,7 @@ function createManager(adapters: Record<string, AgentAdapter>): TaskManager {
 }
 
 /**
- * 产出指定摘要并写入一个改动文件的适配器。
- *
- * 任务成功但没有代码改动时 TaskManager 会把摘要替换为「无代码改动」，
- * 会导致摘要中的提及丢失；这条测试路径必须真实产生改动。
+ * 产出指定摘要并写入一个改动文件，保证任务走正常的合并路径。
  */
 function adapterWithSummary(summary: string): FakeAdapter {
   return new FakeAdapter({

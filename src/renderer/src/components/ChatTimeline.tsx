@@ -74,23 +74,53 @@ export default function ChatTimeline({
               if (message.taskId !== null && lastReplyByTask.has(message.taskId)) {
                 return null
               }
+              if (task === undefined) {
+                return (
+                  <article
+                    key={message.id}
+                    className="message message-task-card"
+                    data-testid="message-task-card"
+                  >
+                    <p className="message-content">{message.content}</p>
+                  </article>
+                )
+              }
+
+              // 还没有最终回复的任务也用聊天消息呈现，避免运行中又出现一张大卡片
+              const taskAgent = agentsById.get(task.agentId)
               return (
                 <article
                   key={message.id}
-                  className="message message-task-card"
+                  className="message message-agent message-task-card"
                   data-testid="message-task-card"
                 >
-                  {task !== undefined ? (
-                    <TaskCard
-                      task={task}
-                      agent={agentsById.get(task.agentId)}
-                      progress={progress[task.id] ?? []}
-                      agents={agents}
-                      activeResolveTask={activeResolveByParent.get(task.id)}
-                    />
-                  ) : (
-                    <p className="message-content">{message.content}</p>
-                  )}
+                  <div className="message-head">
+                    <span
+                      className="message-avatar"
+                      data-preset={taskAgent?.preset ?? 'custom'}
+                      aria-hidden="true"
+                    >
+                      {agentInitial(taskAgent?.name ?? '?')}
+                    </span>
+                    <span className="message-author">
+                      {taskAgent?.name ?? '已删除的成员'}
+                    </span>
+                    {taskAgent !== undefined && (
+                      <span className="message-badge">{presetLabel(taskAgent)}</span>
+                    )}
+                    <span className="message-time">
+                      {formatMessageTime(message.createdAt)}
+                    </span>
+                  </div>
+                  <MessageContent text={taskStatusText(task)} />
+                  <TaskCard
+                    task={task}
+                    agent={taskAgent}
+                    progress={progress[task.id] ?? []}
+                    agents={agents}
+                    activeResolveTask={activeResolveByParent.get(task.id)}
+                    compact
+                  />
                 </article>
               )
             }
@@ -217,16 +247,9 @@ function isLongSystemMessage(content: string): boolean {
   return content.length > 160 || content.split('\n').length > 3
 }
 
-/** Agent 消息和属于某个任务的长输出都视为 Agent 回复。 */
+/** Agent 消息是唯一会进入群聊的回复来源；任务进度由任务卡片的进度区展示。 */
 function isAgentReply(message: ChatMessage): boolean {
-  if (message.kind === 'agent') {
-    return true
-  }
-  return (
-    message.kind === 'system' &&
-    message.taskId !== null &&
-    isLongSystemMessage(message.content)
-  )
+  return message.kind === 'agent'
 }
 
 /** “已分派 N 个任务”只是分派回执，任务本身和 Agent 回复已经足够表达。 */
@@ -240,6 +263,41 @@ function presetLabel(agent: AgentConfig): string {
     : agent.preset === 'codex'
       ? 'Codex'
       : '自定义'
+}
+
+/** 没有最终 Agent 回复时，任务行的正文显示当前状态或已有摘要。 */
+function taskStatusText(task: Task): string {
+  if (task.summary !== null && task.summary !== '') {
+    return task.summary
+  }
+  switch (task.status) {
+    case 'queued':
+      return '等待执行…'
+    case 'preparing':
+      return '正在准备环境…'
+    case 'running':
+      return '正在执行…'
+    case 'merging':
+      return '正在合并…'
+    case 'merged':
+      return '无代码改动'
+    case 'done':
+      return '任务完成，等待合并'
+    case 'awaiting_approval':
+      return '等待确认合并'
+    case 'conflict':
+      return '等待解决合并冲突'
+    case 'failed':
+      return '任务失败'
+    case 'cancelled':
+      return '任务已取消'
+    case 'abandoned':
+      return '任务已放弃'
+    case 'interrupted':
+      return '任务已中断'
+    default:
+      return '任务状态更新'
+  }
 }
 
 function formatMessageTime(iso: string): string {

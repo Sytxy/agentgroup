@@ -237,9 +237,47 @@ select:focus-visible {
 }
 
 .sidebar-tagline {
-  margin: 6px 8px 24px;
+  margin: 6px 8px 16px;
   color: var(--muted);
   font-size: 0.7rem;
+}
+
+.sidebar-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px 6px;
+  color: var(--faint);
+  font-size: 0.64rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.workspace-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin: 0 0 10px;
+  padding: 9px 12px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 14px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.workspace-add:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line-strong));
+  background: var(--chip-bg);
+  color: var(--accent-strong);
 }
 
 .workspace-list {
@@ -253,9 +291,10 @@ select:focus-visible {
 
 .workspace-item {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 11px 12px;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
   border: 1px solid transparent;
   border-radius: 14px;
   background: transparent;
@@ -276,6 +315,29 @@ select:focus-visible {
   border-color: var(--line);
   background: var(--card);
   box-shadow: var(--shadow-soft);
+}
+
+.workspace-item-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.workspace-item-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
 }
 
 .workspace-item-name {
@@ -1479,6 +1541,21 @@ select:focus-visible {
   height: 100%;
 }
 
+/* 侧边栏“新建项目”打开时覆盖在当前项目之上 */
+.setup-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  overflow-y: auto;
+  background-color: var(--bg);
+  background-image: var(--bg-gradient);
+}
+
+.setup-overlay .setup-screen {
+  min-height: 100%;
+  height: auto;
+}
+
 .setup-aside {
   display: flex;
   flex-direction: column;
@@ -1742,6 +1819,16 @@ select:focus-visible {
   line-height: 1.5;
 }
 
+.setup-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.setup-actions .setup-submit {
+  flex: 1;
+}
+
 .setup-submit {
   margin-top: 4px;
   padding: 11px 16px;
@@ -1762,6 +1849,31 @@ select:focus-visible {
 }
 
 .setup-submit:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.setup-cancel {
+  margin-top: 4px;
+  padding: 11px 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.setup-cancel:hover:not(:disabled) {
+  background: var(--chip-bg);
+  color: var(--ink-soft);
+}
+
+.setup-cancel:disabled {
   opacity: 0.4;
   cursor: default;
 }

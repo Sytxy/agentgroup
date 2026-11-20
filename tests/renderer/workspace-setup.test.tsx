@@ -148,6 +148,55 @@ describe('项目外壳', () => {
     expect(screen.getByLabelText('项目名称')).toBeInTheDocument()
   })
 
+  test('已有项目时可从侧边栏新建第二个项目并切换', async () => {
+    const second: Workspace = {
+      ...workspace,
+      id: 'w2',
+      name: 'second',
+      repoPath: '/repo2'
+    }
+    let created = false
+    const invoke = installApi({
+      'workspace:list': () => (created ? [workspace, second] : [workspace]),
+      'workspace:create': () => {
+        created = true
+        return second
+      },
+      'chat:history': () => [],
+      'tasks:list': () => [],
+      'agents:list': () => [],
+      'workspace:diff': () => ({ files: 0, insertions: 0, deletions: 0 })
+    })
+
+    render(<App />)
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'demo' })
+    ).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /新建项目/ }))
+    expect(await screen.findByRole('heading', { name: '添加项目' })).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('项目名称'), {
+      target: { value: 'second' }
+    })
+    fireEvent.change(screen.getByLabelText('仓库路径'), {
+      target: { value: '/repo2' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: '添加项目' }))
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('workspace:create', {
+        name: 'second',
+        repoPath: '/repo2'
+      })
+    })
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'second' })
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /demo/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /second/ })).toBeInTheDocument()
+  })
+
   test('存在工作区时初始加载历史、任务、成员与 diff', async () => {
     const invoke = installApi(initialHandlers())
 

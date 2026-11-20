@@ -617,12 +617,13 @@ export class TaskManager {
         summary = event.summary
       }
 
-      // 成功结束后提交全部改动；没有改动时返回 null，摘要标记为无代码改动
+      // 成功结束后提交全部改动；只有 Agent 没有给出文本回复时才用占位摘要，
+      // 纯分析/问答任务的最终结果不能被“无代码改动”覆盖。
       const commit = await this.git.commitAll(
         worktreePath,
         `agent(${agent.name}): ${task.title}`
       )
-      if (commit === null) {
+      if (commit === null && (summary === null || summary === '')) {
         summary = '无代码改动'
       }
       this.finish(task, 'done', summary, 0)
@@ -667,6 +668,29 @@ export class TaskManager {
       })
     }
     this.emitTask(task.id)
+
+    // Agent 的最终文本就是群聊里的回复；没有代码改动不代表没有结果。
+    // 只有真正的空回复（或“无代码改动”占位）不单独发消息。
+    if (
+      status === 'done' &&
+      summary !== null &&
+      summary !== '' &&
+      summary !== '无代码改动'
+    ) {
+      const message: ChatMessage = {
+        id: randomUUID(),
+        workspaceId: task.workspaceId,
+        kind: 'agent',
+        authorType: 'agent',
+        authorId: task.agentId,
+        content: summary,
+        taskId: task.id,
+        createdAt: this.now().toISOString()
+      }
+      this.messages.insert(message)
+      this.events.emit({ type: 'message', message })
+    }
+
     this.addSystemMessage(task, terminalMessage(status, task.title, summary))
 
     // 成功任务先处理 Agent 委派：委派只依赖摘要与 Agent 配置，放在合并回调之前

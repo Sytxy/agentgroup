@@ -133,9 +133,11 @@ describe('群聊时间线', () => {
 
     const card = screen.getByTestId('message-task-card')
     expect(card).toHaveClass('message-task-card')
-    expect(card).toHaveTextContent('修复登录')
+    expect(card).toHaveClass('message-agent')
+    expect(card).toHaveTextContent('claude')
+    expect(card).toHaveTextContent('正在执行')
     // 任务卡片展示对应任务的当前状态（中文标签）
-    expect(card).toHaveTextContent('运行中')
+    expect(within(card).getByTestId('task-card-status')).toHaveTextContent('运行中')
 
     // Agent 消息展示成员名而不是 id
     const agentMessage = screen.getByTestId('message-agent')
@@ -173,7 +175,7 @@ describe('群聊时间线', () => {
           message('assigned', 'system', '已分派 1 个任务：claude'),
           message('card', 'task-card', '你是谁？', { taskId: 't1' }),
           message('start', 'system', '开始执行任务：你是谁？', { taskId: 't1' }),
-          message('reply', 'system', longReply, { taskId: 't1' }),
+          message('reply', 'agent', longReply, { taskId: 't1', authorId: 'a1' }),
           message('done', 'system', '任务完成：你是谁？\n无代码改动', { taskId: 't1' })
         ]}
         tasks={[task('t1', 'merged')]}
@@ -194,6 +196,22 @@ describe('群聊时间线', () => {
     const inlineCard = within(agentMessage).getByTestId('task-card')
     expect(inlineCard).toHaveClass('task-card-inline')
     expect(inlineCard).toHaveTextContent('已合并')
+  })
+
+  test('没有最终回复的任务也以聊天消息展示摘要和紧凑状态', () => {
+    render(
+      <ChatTimeline
+        messages={[message('card', 'task-card', '分析项目', { taskId: 't1' })]}
+        tasks={[{ ...task('t1', 'merged'), summary: '这是项目分析结果' }]}
+        agents={[agent('a1', 'claude')]}
+      />
+    )
+
+    const card = screen.getByTestId('message-task-card')
+    expect(card).toHaveClass('message-agent')
+    expect(card).toHaveTextContent('claude')
+    expect(card).toHaveTextContent('这是项目分析结果')
+    expect(within(card).getByTestId('task-card')).toHaveClass('task-card-inline')
   })
 
   test('agent message falls back to author id then 已删除的成员', () => {
