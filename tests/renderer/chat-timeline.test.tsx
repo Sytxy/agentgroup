@@ -1,6 +1,6 @@
 // 群聊时间线测试：四类消息渲染差异、实时事件去重、发送结果合并。
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type {
   AgentConfig,
@@ -113,7 +113,7 @@ describe('群聊时间线', () => {
         messages={[
           message('m1', 'user', '请修复登录'),
           message('m2', 'agent', '收到，开始处理', { authorId: 'a1' }),
-          message('m3', 'system', '已分派 1 个任务'),
+          message('m3', 'system', '未找到 Agent：@unknown'),
           message('m4', 'task-card', '修复登录', { taskId: 't1' })
         ]}
         tasks={[task('t1', 'running')]}
@@ -128,7 +128,8 @@ describe('群聊时间线', () => {
 
     const system = screen.getByTestId('message-system')
     expect(system).toHaveClass('message-system')
-    expect(system).toHaveTextContent('已分派 1 个任务')
+    expect(system).not.toHaveClass('message-system-long')
+    expect(system).toHaveTextContent('未找到 Agent：@unknown')
 
     const card = screen.getByTestId('message-task-card')
     expect(card).toHaveClass('message-task-card')
@@ -140,6 +141,59 @@ describe('群聊时间线', () => {
     const agentMessage = screen.getByTestId('message-agent')
     expect(agentMessage).toHaveTextContent('claude')
     expect(agentMessage).toHaveTextContent('收到，开始处理')
+  })
+
+  test('长 Agent 输出不再套系统胶囊框', () => {
+    render(
+      <ChatTimeline
+        messages={[
+          message(
+            'm1',
+            'system',
+            '我没有收到具体任务。\n\n我这边的情况：\n- 工作目录：/tmp/repo\n- 分支：agent/task\n\n请告诉我需要做什么。'
+          )
+        ]}
+        tasks={[]}
+        agents={[]}
+      />
+    )
+
+    const system = screen.getByTestId('message-system')
+    expect(system).toHaveClass('message-system-long')
+    expect(system).toHaveTextContent('请告诉我需要做什么')
+  })
+
+  test('任务卡跟随 Agent 长回复展示，并隐藏重复的短状态', () => {
+    const longReply =
+      '我是负责本工作区的执行代理。\n\n当前情况：\n- 工作区干净\n- 分支 agent/task\n\n请告诉我需要做什么。'
+    render(
+      <ChatTimeline
+        messages={[
+          message('u1', 'user', '@claude 你是谁？'),
+          message('assigned', 'system', '已分派 1 个任务：claude'),
+          message('card', 'task-card', '你是谁？', { taskId: 't1' }),
+          message('start', 'system', '开始执行任务：你是谁？', { taskId: 't1' }),
+          message('reply', 'system', longReply, { taskId: 't1' }),
+          message('done', 'system', '任务完成：你是谁？\n无代码改动', { taskId: 't1' })
+        ]}
+        tasks={[task('t1', 'merged')]}
+        agents={[agent('a1', 'claude')]}
+      />
+    )
+
+    // 任务的短状态消息不再刷屏
+    expect(screen.queryByText(/开始执行任务/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/任务完成/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/已分派/)).not.toBeInTheDocument()
+    // 独立任务卡不再出现，而是收在 Agent 回复下方
+    expect(screen.queryByTestId('message-task-card')).not.toBeInTheDocument()
+
+    const agentMessage = screen.getByTestId('message-agent')
+    expect(agentMessage).toHaveTextContent('claude')
+    expect(agentMessage).toHaveTextContent('我是负责本工作区')
+    const inlineCard = within(agentMessage).getByTestId('task-card')
+    expect(inlineCard).toHaveClass('task-card-inline')
+    expect(inlineCard).toHaveTextContent('已合并')
   })
 
   test('agent message falls back to author id then 已删除的成员', () => {

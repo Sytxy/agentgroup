@@ -63,6 +63,10 @@ export interface DetectedAgent {
   installed: boolean
   version: string | null
   path: string | null
+  /** 登录状态；null 表示该 CLI 没有可用的状态探测命令或探测失败。 */
+  loggedIn: boolean | null
+  /** 未登录时展示的登录命令。 */
+  loginHint: string | null
 }
 
 export interface Task {

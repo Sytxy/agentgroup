@@ -75,7 +75,11 @@ export default function AddAgentDialog({
     void refresh()
   }, [refresh])
 
-  const installedCount = candidates?.filter((candidate) => candidate.installed).length ?? 0
+  const installedCandidates = candidates?.filter((candidate) => candidate.installed) ?? []
+  const installedCount = installedCandidates.length
+  const loggedOutCount = installedCandidates.filter(
+    (candidate) => candidate.loggedIn === false
+  ).length
 
   const handleAddDetected = async (candidate: DetectedAgent): Promise<void> => {
     setAddingId(candidate.id)
@@ -148,58 +152,75 @@ export default function AddAgentDialog({
             <>
               <p className="agent-gallery-summary">
                 已检测到 {installedCount} 个本地 Agent
+                {loggedOutCount > 0 ? `，其中 ${loggedOutCount} 个未登录` : ''}
               </p>
               <div className="agent-gallery-grid">
-                {candidates.map((candidate) => (
-                  <article className="agent-candidate" key={candidate.id}>
-                    <div className="agent-candidate-head">
-                      <span
-                        className="agent-avatar candidate-avatar"
-                        data-preset={candidate.preset}
-                        aria-hidden="true"
-                      >
-                        {agentInitial(candidate.name)}
-                      </span>
-                      <div className="agent-candidate-title">
-                        <h3>{candidate.name}</h3>
-                        <p>{candidate.vendor}</p>
+                {candidates.map((candidate) => {
+                  const status = candidateStatus(candidate)
+                  return (
+                    <article className="agent-candidate" key={candidate.id}>
+                      <div className="agent-candidate-head">
+                        <span
+                          className="agent-avatar candidate-avatar"
+                          data-preset={candidate.preset}
+                          aria-hidden="true"
+                        >
+                          {agentInitial(candidate.name)}
+                        </span>
+                        <div className="agent-candidate-title">
+                          <h3>{candidate.name}</h3>
+                          <p>{candidate.vendor}</p>
+                        </div>
                       </div>
-                    </div>
-                    <div className="agent-candidate-meta">
-                      <span
-                        className={
-                          candidate.installed
-                            ? 'agent-candidate-status agent-candidate-ready'
-                            : 'agent-candidate-status'
-                        }
-                      >
-                        {candidate.installed ? '已就绪' : '未检测到'}
-                      </span>
-                    </div>
-                    <p className="agent-candidate-desc">{candidate.description}</p>
-                    {candidate.installed ? (
-                      <p className="agent-candidate-path" title={candidate.path ?? undefined}>
-                        {candidate.version ?? '版本未知'} · {candidate.path}
-                      </p>
-                    ) : (
-                      <code className="agent-candidate-install">{candidate.installHint}</code>
-                    )}
-                    <div className="agent-candidate-actions">
-                      <button
-                        type="button"
-                        className="dialog-button dialog-button-primary"
-                        disabled={!candidate.installed || addingId !== null}
-                        onClick={() => void handleAddDetected(candidate)}
-                      >
-                        {!candidate.installed
-                          ? '未安装'
-                          : addingId === candidate.id
-                            ? '添加中…'
-                            : '添加'}
-                      </button>
-                    </div>
-                  </article>
-                ))}
+                      <div className="agent-candidate-meta">
+                        <span className={status.className}>{status.label}</span>
+                      </div>
+                      <p className="agent-candidate-desc">{candidate.description}</p>
+                      {candidate.installed ? (
+                        <>
+                          <p
+                            className="agent-candidate-path"
+                            title={candidate.path ?? undefined}
+                          >
+                            {candidate.version ?? '版本未知'} · {candidate.path}
+                          </p>
+                          {candidate.loggedIn === false && candidate.loginHint !== null && (
+                            <p className="agent-candidate-login">
+                              未登录，先在终端运行 <code>{candidate.loginHint}</code>
+                            </p>
+                          )}
+                        </>
+                      ) : (
+                        <code className="agent-candidate-install">{candidate.installHint}</code>
+                      )}
+                      <div className="agent-candidate-actions">
+                        <button
+                          type="button"
+                          className="dialog-button dialog-button-primary"
+                          disabled={
+                            !candidate.installed ||
+                            candidate.loggedIn === false ||
+                            addingId !== null
+                          }
+                          title={
+                            candidate.loggedIn === false && candidate.loginHint !== null
+                              ? `请先在终端运行 ${candidate.loginHint}`
+                              : undefined
+                          }
+                          onClick={() => void handleAddDetected(candidate)}
+                        >
+                          {!candidate.installed
+                            ? '未安装'
+                            : candidate.loggedIn === false
+                              ? '未登录'
+                              : addingId === candidate.id
+                                ? '添加中…'
+                                : '添加'}
+                        </button>
+                      </div>
+                    </article>
+                  )
+                })}
               </div>
             </>
           )}
@@ -429,6 +450,23 @@ function uniqueName(base: string, existing: AgentConfig[]): string {
 
 function agentInitial(name: string): string {
   return Array.from(name.trim())[0]?.toUpperCase() ?? '?'
+}
+
+/** 候选卡片的登录/安装状态；未登录单独用警示色，避免用户添加后才发现无法运行。 */
+function candidateStatus(candidate: DetectedAgent): { label: string; className: string } {
+  if (!candidate.installed) {
+    return { label: '未检测到', className: 'agent-candidate-status' }
+  }
+  if (candidate.loggedIn === false) {
+    return {
+      label: '未登录',
+      className: 'agent-candidate-status agent-candidate-blocked'
+    }
+  }
+  return {
+    label: candidate.loggedIn === true ? '已登录' : '已安装',
+    className: 'agent-candidate-status agent-candidate-ready'
+  }
 }
 
 /** 逗号分隔的路径范围：去空白、去空项。 */

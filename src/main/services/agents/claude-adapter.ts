@@ -12,6 +12,7 @@ import { AgentRunError, type AgentAdapter, type AgentEvent } from './adapter'
 import { ClaudeStreamParser } from './claude-stream-parser'
 import { LineSplitter } from './line-splitter'
 import type { ProcessRunner } from './process-runner'
+import { stripClaudeHostEnv } from './standalone-env'
 import type { PermissionProfile } from '../../../shared/types'
 
 // 兜底摘要最多保留的输出行数，避免把超长日志整段塞进任务完成消息。
@@ -46,7 +47,9 @@ export class ClaudeAdapter implements AgentAdapter {
     const handle = this.runner.spawn(
       'claude',
       buildClaudeArgs({ prompt: input.prompt, permission: this.permission }),
-      { cwd: input.cwd }
+      // 任务 CLI 必须按自己的 ~/.claude/settings.json 认证与选模型，
+      // 不能继承启动 AgentGroup 的 Claude Code 宿主环境。
+      { cwd: input.cwd, env: stripClaudeHostEnv() }
     )
 
     const parser = new ClaudeStreamParser()

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { AgentRunError, type AgentEvent } from '../../src/main/services/agents/adapter'
 import { ClaudeAdapter, buildClaudeArgs } from '../../src/main/services/agents/claude-adapter'
 import { ClaudeStreamParser } from '../../src/main/services/agents/claude-stream-parser'
@@ -33,15 +33,24 @@ async function collectError(events: AsyncIterable<AgentEvent>): Promise<AgentRun
 }
 
 class ScriptedRunner implements ProcessRunner {
-  readonly spawns: Array<{ command: string; args: string[]; cwd: string }> = []
+  readonly spawns: Array<{
+    command: string
+    args: string[]
+    cwd: string
+    env?: NodeJS.ProcessEnv
+  }> = []
 
   constructor(
     private readonly chunks: string[],
     private readonly exit: { code: number | null; error?: Error } = { code: 0 }
   ) {}
 
-  spawn(command: string, args: string[], opts: { cwd: string }): ProcessHandle {
-    this.spawns.push({ command, args, cwd: opts.cwd })
+  spawn(
+    command: string,
+    args: string[],
+    opts: { cwd: string; env?: NodeJS.ProcessEnv }
+  ): ProcessHandle {
+    this.spawns.push({ command, args, cwd: opts.cwd, env: opts.env })
     const dataCallbacks: Array<(chunk: string) => void> = []
     const exitCallbacks: Array<(code: number | null, error?: Error) => void> = []
     // 异步结束，模拟真实子进程不会在 start() 返回前就退出。
@@ -143,6 +152,10 @@ describe('ClaudeStreamParser', () => {
 })
 
 describe('ClaudeAdapter', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
   test('spawns claude with the built args and maps the stream', async () => {
     const runner = new ScriptedRunner([fixtureContent])
     const adapter = new ClaudeAdapter(runner, 'edit-only')
@@ -151,19 +164,44 @@ describe('ClaudeAdapter', () => {
       adapter.start({ prompt: 'fix the bug', cwd, signal: new AbortController().signal })
     )
 
-    expect(runner.spawns).toEqual([
-      {
-        command: 'claude',
-        args: buildClaudeArgs({ prompt: 'fix the bug', permission: 'edit-only' }),
-        cwd
-      }
-    ])
+    expect(runner.spawns).toHaveLength(1)
+    expect(runner.spawns[0]).toMatchObject({
+      command: 'claude',
+      args: buildClaudeArgs({ prompt: 'fix the bug', permission: 'edit-only' }),
+      cwd
+    })
     expect(events).toEqual([
       { type: 'progress', text: '执行 Read' },
       { type: 'progress', text: 'hello from claude' },
       { type: 'final', summary: 'All done' },
       { type: 'log', text: 'not json at all' }
     ])
+  })
+
+  test('strips host Claude Code environment from the task process', async () => {
+    // 模拟 AgentGroup 从 Claude Code 宿主中启动：父进程带 BASE_URL 和模型变量，
+    // 但没有 token。子进程必须只按自己的 ~/.claude/settings.json 运行。
+    vi.stubEnv('ANTHROPIC_BASE_URL', 'http://127.0.0.1:15721')
+    vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'host-token')
+    vi.stubEnv('ANTHROPIC_DEFAULT_SONNET_MODEL', 'claude-sonnet-5')
+    vi.stubEnv('CLAUDE_CODE_SESSION_ID', 'host-session')
+    vi.stubEnv('CLAUDE_CODE_ENTRYPOINT', 'claude-desktop-3p')
+
+    const runner = new ScriptedRunner([fixtureContent])
+    const adapter = new ClaudeAdapter(runner, 'edit-only')
+    await collect(
+      adapter.start({ prompt: 'fix the bug', cwd, signal: new AbortController().signal })
+    )
+
+    const env = runner.spawns[0]?.env
+    expect(env?.['ANTHROPIC_BASE_URL']).toBeUndefined()
+    expect(env?.['ANTHROPIC_AUTH_TOKEN']).toBeUndefined()
+    expect(env?.['ANTHROPIC_DEFAULT_SONNET_MODEL']).toBeUndefined()
+    expect(env?.['CLAUDE_CODE_SESSION_ID']).toBeUndefined()
+    expect(env?.['CLAUDE_CODE_ENTRYPOINT']).toBeUndefined()
+    // 普通环境变量仍需保留，CLI 依赖 HOME 找到自己的 settings.json
+    expect(env?.['HOME']).toBe(process.env.HOME)
+    expect(env?.['PATH']).toBe(process.env.PATH)
   })
 
   test('throws AgentRunError with the last lines on non-zero exit', async () => {

@@ -21,7 +21,9 @@ const detected: DetectedAgent[] = [
     rolePrompt: '负责编写代码。',
     installed: true,
     version: '2.1.327',
-    path: '/nvm/bin/claude'
+    path: '/nvm/bin/claude',
+    loggedIn: true,
+    loginHint: 'claude auth login'
   },
   {
     id: 'gemini',
@@ -34,7 +36,9 @@ const detected: DetectedAgent[] = [
     rolePrompt: '负责编写代码。',
     installed: false,
     version: null,
-    path: null
+    path: null,
+    loggedIn: null,
+    loginHint: null
   }
 ]
 
@@ -106,6 +110,28 @@ describe('添加 Agent 对话框', () => {
     })
     expect(onAdded).toHaveBeenCalled()
     expect(onClose).toHaveBeenCalled()
+  })
+
+  test('已安装但未登录的 Agent 不能一键添加，并显示登录命令', async () => {
+    const invoke = installApi([
+      {
+        ...(detected[0] as DetectedAgent),
+        loggedIn: false,
+        loginHint: 'claude auth login'
+      }
+    ])
+    render(<AddAgentDialog workspaceId="w1" onAdded={vi.fn()} onClose={vi.fn()} />)
+
+    expect(
+      await screen.findByText('已检测到 1 个本地 Agent，其中 1 个未登录')
+    ).toBeInTheDocument()
+
+    const claudeCard = screen.getByText('Claude Code CLI').closest('article') as HTMLElement
+    // 状态徽标和按钮都显示“未登录”，按钮不可点击，避免添加后才发现无法运行
+    expect(within(claudeCard).getAllByText('未登录')).toHaveLength(2)
+    expect(within(claudeCard).getByText(/claude auth login/)).toBeInTheDocument()
+    expect(within(claudeCard).getByRole('button', { name: '未登录' })).toBeDisabled()
+    expect(invoke.mock.calls.some(([channel]) => channel === 'agents:add')).toBe(false)
   })
 
   test('add agent dialog warns for edit-and-run profile', async () => {

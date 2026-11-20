@@ -166,6 +166,7 @@ xattr -dr com.apple.quarantine /Applications/AgentGroup.app
   - Claude/Codex 预设固定执行 `claude`/`codex`，请确保这两个命令在登录 shell 的 PATH 中。`/usr/local/bin` 不在 launchd 的默认 PATH 里，不要把「链接到 `/usr/local/bin`」当作回退方案；可以改用「自定义 Agent」并填写 CLI 的**绝对路径**，或写一个包装脚本并用绝对路径调用。
   - 自定义 Agent 可以直接在「命令」中填写 CLI 的绝对路径（例如 `/Users/me/.local/bin/my-cli`）。
 - 从 Finder/LaunchServices 启动的 App **不会继承 shell profile 里的其他环境变量**（例如 `ANTHROPIC_API_KEY`、`OPENAI_API_KEY`、代理配置）。如果 CLI 依赖这些变量，请把它们写进 CLI 自己的配置文件，或用包装脚本在启动时显式设置；AgentGroup 不读取也不保存这些密钥。
+- 启动 Claude 任务时，AgentGroup 会剥离从父进程继承的 `ANTHROPIC_*`、`CLAUDE_CODE_*` 等宿主变量，让 CLI 始终按自己的 `~/.claude/settings.json` 认证和选择模型。例如通过 CC Switch 等本地代理使用时，只需配置 CLI 的 settings，不需要为 App 单独设置环境变量；在 Claude Code 会话里启动 AgentGroup 也不会把宿主环境带进任务。
 - DeepSeek 等自定义 CLI 需要自己处理登录和 API Key，AgentGroup 不存储密钥。
 
 **任务失败：`setup_copy` 目标未被 `.gitignore` 忽略**
@@ -195,3 +196,8 @@ pnpm typecheck  # TypeScript 类型检查
 pnpm test       # Vitest
 pnpm build      # electron-vite 构建
 ```
+
+## License
+
+MIT
+

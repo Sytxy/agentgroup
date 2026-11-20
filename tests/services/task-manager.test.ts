@@ -504,6 +504,30 @@ describe('TaskManager', () => {
     expect(recordStatuses(seen, task.id)).toEqual(['preparing', 'running', 'failed'])
   })
 
+  test('authentication failure becomes an actionable login hint', async () => {
+    insertAgent()
+    const adapter = new FakeAdapter({
+      steps: [],
+      error: new AgentRunError(
+        'Agent 进程以退出码 1 结束\nNot logged in · Please run /login',
+        1
+      )
+    })
+    const task = insertTask({ title: 'Auth fail' })
+
+    const manager = createManager(adapter)
+    manager.start()
+
+    await waitFor(() => tasks.get(task.id)?.status === 'failed')
+
+    const stored = tasks.get(task.id) as Task
+    expect(stored.summary).toContain('Agent 未登录')
+    expect(stored.summary).toContain('claude auth login')
+    // 不再把原始英文日志和退出码整段塞给用户
+    expect(stored.summary).not.toContain('Not logged in')
+    expect(stored.exitCode).toBe(1)
+  })
+
   test('prompt includes role, path scope and task text', async () => {
     insertAgent({
       rolePrompt: '你是前端专家',

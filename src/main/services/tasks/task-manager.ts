@@ -624,7 +624,9 @@ export class TaskManager {
       } else if (this.cancelRequested.has(task.id)) {
         this.finish(task, 'cancelled', '任务已取消', exitCodeOf(error))
       } else {
-        this.finish(task, 'failed', errorMessage(error), exitCodeOf(error))
+        // CLI 未登录时原始输出只有 “Not logged in · Please run /login” 一类的英文，
+        // 统一转成可执行的登录提示；其他失败仍保留原始错误便于排查。
+        this.finish(task, 'failed', taskFailureSummary(error, agent), exitCodeOf(error))
       }
     } finally {
       clearTimeout(timeoutTimer)
@@ -816,6 +818,34 @@ function terminalMessage(status: TaskStatus, title: string, summary: string | nu
         ? `任务已取消：${title}`
         : `任务失败：${title}`
   return summary === null || summary === '' ? head : `${head}\n${summary}`
+}
+
+/**
+ * 把 CLI 的原始认证失败转换成用户能直接照做的中文提示。
+ * 只匹配明确的登录错误特征，避免把普通命令输出里的 401/unauthorized 误判为登录问题。
+ */
+function taskFailureSummary(error: unknown, agent: AgentConfig): string {
+  const message = errorMessage(error)
+  if (!isAuthenticationFailure(message)) {
+    return message
+  }
+  const loginCommand =
+    agent.preset === 'claude'
+      ? 'claude auth login'
+      : agent.preset === 'codex'
+        ? 'codex login'
+        : null
+  const hint =
+    loginCommand === null
+      ? '请在终端重新登录该 Agent CLI 后重试。'
+      : `请在终端执行「${loginCommand}」完成登录后重试。`
+  return `Agent 未登录：${agent.name} 没有可用的登录凭据。${hint}`
+}
+
+function isAuthenticationFailure(message: string): boolean {
+  return /not logged in|please run \/login|authentication_failed|invalid api key/i.test(
+    message
+  )
 }
 
 function exitCodeOf(error: unknown): number | null {

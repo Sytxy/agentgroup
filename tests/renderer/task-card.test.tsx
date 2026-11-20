@@ -1,4 +1,4 @@
-// 任务卡片与顶部状态测试：按状态渲染操作、调用对应 IPC、展开日志，
+// 任务卡片与顶部状态测试：按状态渲染操作、调用对应 IPC，
 // 以及顶部验证状态与"复制合入命令"按钮。
 import '@testing-library/jest-dom/vitest'
 import { cleanup, fireEvent, render, screen, waitFor, act } from '@testing-library/react'
@@ -77,8 +77,7 @@ const taskActions: Record<string, Handler> = {
   'tasks:prepare-resolve': () => '/tmp/worktrees/w1/t1',
   'tasks:open-worktree': () => '/tmp/worktrees/w1/t1',
   'tasks:mark-resolved': () => undefined,
-  'tasks:create-resolve': () => makeTask('queued', { id: 'resolve-1' }),
-  'tasks:log': () => '第一行日志\n第二行日志'
+  'tasks:create-resolve': () => makeTask('queued', { id: 'resolve-1' })
 }
 
 function renderCard(
@@ -174,8 +173,6 @@ describe('任务卡片', () => {
       screen.queryByRole('button', { name: '标记已解决并重新合并' })
     ).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '放弃' })).not.toBeInTheDocument()
-    // 只读操作（日志）仍可用
-    expect(screen.getByRole('button', { name: '展开日志' })).toBeInTheDocument()
   })
 
   test('App hides conflict actions when a resolve task is still active', async () => {
@@ -239,7 +236,7 @@ describe('任务卡片', () => {
     expect(screen.queryByRole('button', { name: '取消' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '重试' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '放弃' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '展开日志' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '展开日志' })).not.toBeInTheDocument()
   })
 
   test('card shows agent, branch, elapsed time, status and recent progress', () => {
@@ -270,15 +267,6 @@ describe('任务卡片', () => {
     expect(screen.getByText('已删除的成员')).toBeInTheDocument()
   })
 
-  test('expanding the log loads tasks:log on demand', async () => {
-    const invoke = renderCard('running')
-    expect(invoke).not.toHaveBeenCalledWith('tasks:log', { taskId: 't1' })
-
-    fireEvent.click(screen.getByRole('button', { name: '展开日志' }))
-    expect(await screen.findByTestId('task-log')).toHaveTextContent('第一行日志')
-    expect(invoke).toHaveBeenCalledWith('tasks:log', { taskId: 't1' })
-    expect(screen.getByRole('button', { name: '收起日志' })).toBeInTheDocument()
-  })
 })
 
 const workspace: Workspace = {

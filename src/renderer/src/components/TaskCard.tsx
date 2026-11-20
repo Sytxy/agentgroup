@@ -7,7 +7,6 @@ import {
   approveMerge,
   cancelTask,
   createResolveTask,
-  getTaskLog,
   markTaskResolved,
   openTaskWorktree,
   prepareResolveWorktree,
@@ -28,6 +27,11 @@ interface TaskCardProps {
    * 指派/打开/标记/放弃操作，避免两个操作同时修改同一现场。
    */
   activeResolveTask?: Task
+  /**
+   * 嵌在 Agent 回复下方时使用紧凑布局：成员头、任务标题和摘要已由回复消息展示，
+   * 这里只保留状态、分支、耗时、进度和操作。
+   */
+  compact?: boolean
 }
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
@@ -64,13 +68,10 @@ export default function TaskCard({
   agent,
   progress,
   agents,
-  activeResolveTask
+  activeResolveTask,
+  compact = false
 }: TaskCardProps): React.JSX.Element {
   const [resolveAgentId, setResolveAgentId] = useState('')
-  const [logOpen, setLogOpen] = useState(false)
-  const [log, setLog] = useState<string | null>(null)
-  const [logLoading, setLogLoading] = useState(false)
-  const [logError, setLogError] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
 
@@ -80,6 +81,18 @@ export default function TaskCard({
   const showProgress = recentProgress.length > 0 || ACTIVE_STATUSES.has(task.status)
   // 冲突现场正被解决任务占用：隐藏所有会并发操作同一 worktree 的按钮
   const resolveInProgress = task.status === 'conflict' && activeResolveTask !== undefined
+  const canAbandon =
+    !resolveInProgress &&
+    (task.status === 'conflict' ||
+      task.status === 'awaiting_approval' ||
+      RETRYABLE.has(task.status))
+  // 已合并等没有操作的状态不渲染空按钮行，避免状态条下方多出一段留白
+  const hasActions =
+    CANCELLABLE.has(task.status) ||
+    (task.status === 'conflict' && !resolveInProgress) ||
+    task.status === 'awaiting_approval' ||
+    RETRYABLE.has(task.status) ||
+    canAbandon
 
   /** 统一处理操作按钮：执行期间禁用其他按钮，失败时展示可读错误。 */
   const runAction = async (name: string, action: () => Promise<unknown>): Promise<void> => {
@@ -94,27 +107,6 @@ export default function TaskCard({
     }
   }
 
-  // 日志按需加载：首次展开时请求，收起后保留已加载内容，避免重复读取。
-  const handleToggleLog = async (): Promise<void> => {
-    if (logOpen) {
-      setLogOpen(false)
-      return
-    }
-    setLogOpen(true)
-    if (log !== null || logLoading) {
-      return
-    }
-    setLogLoading(true)
-    setLogError(null)
-    try {
-      setLog(await getTaskLog(task.id))
-    } catch (cause) {
-      setLogError(errorMessage(cause))
-    } finally {
-      setLogLoading(false)
-    }
-  }
-
   const handleOpenWorktree = (): void => {
     void runAction('open-worktree', async () => {
       // 目录可能已随现场清理被删除，先确保 worktree 存在再打开
@@ -124,34 +116,52 @@ export default function TaskCard({
   }
 
   return (
-    <section className="task-card" data-testid="task-card" data-status={task.status}>
-      <header className="task-card-header">
-        <div className="task-card-heading">
-          <span
-            className="task-card-avatar"
-            data-preset={agent?.preset ?? 'custom'}
-            aria-hidden="true"
-          >
-            {agentInitial(agent?.name ?? '?')}
-          </span>
-          <div className="task-card-heading-text">
-            <span className="task-card-agent" data-testid="task-card-agent">
-              {agent?.name ?? '已删除的成员'}
-            </span>
-            <span className="task-card-title">{task.title}</span>
+    <section
+      className={compact ? 'task-card task-card-inline' : 'task-card'}
+      data-testid="task-card"
+      data-status={task.status}
+    >
+      {compact ? (
+        <div className="task-card-inline-head">
+          <div className="task-card-meta">
+            <span data-testid="task-branch">分支：{task.branch ?? '—'}</span>
+            <span data-testid="task-elapsed">耗时 {formatElapsed(task)}</span>
           </div>
+          <span className="task-card-status" data-testid="task-card-status">
+            {STATUS_LABELS[task.status]}
+          </span>
         </div>
-        <span className="task-card-status" data-testid="task-card-status">
-          {STATUS_LABELS[task.status]}
-        </span>
-      </header>
+      ) : (
+        <>
+          <header className="task-card-header">
+            <div className="task-card-heading">
+              <span
+                className="task-card-avatar"
+                data-preset={agent?.preset ?? 'custom'}
+                aria-hidden="true"
+              >
+                {agentInitial(agent?.name ?? '?')}
+              </span>
+              <div className="task-card-heading-text">
+                <span className="task-card-agent" data-testid="task-card-agent">
+                  {agent?.name ?? '已删除的成员'}
+                </span>
+                <span className="task-card-title">{task.title}</span>
+              </div>
+            </div>
+            <span className="task-card-status" data-testid="task-card-status">
+              {STATUS_LABELS[task.status]}
+            </span>
+          </header>
 
-      <div className="task-card-meta">
-        <span data-testid="task-branch">分支：{task.branch ?? '—'}</span>
-        <span data-testid="task-elapsed">耗时 {formatElapsed(task)}</span>
-      </div>
+          <div className="task-card-meta">
+            <span data-testid="task-branch">分支：{task.branch ?? '—'}</span>
+            <span data-testid="task-elapsed">耗时 {formatElapsed(task)}</span>
+          </div>
+        </>
+      )}
 
-      {task.summary !== null && task.summary !== '' && (
+      {!compact && task.summary !== null && task.summary !== '' && (
         <p className="task-card-summary">{task.summary}</p>
       )}
 
@@ -182,124 +192,102 @@ export default function TaskCard({
         </p>
       )}
 
-      <div className="task-card-actions">
-        {CANCELLABLE.has(task.status) && (
-          <button
-            type="button"
-            className="task-card-button"
-            disabled={pendingAction !== null}
-            onClick={() => void runAction('cancel', () => cancelTask(task.id))}
-          >
-            取消
-          </button>
-        )}
+      {hasActions && (
+        <div className="task-card-actions">
+          {CANCELLABLE.has(task.status) && (
+            <button
+              type="button"
+              className="task-card-button"
+              disabled={pendingAction !== null}
+              onClick={() => void runAction('cancel', () => cancelTask(task.id))}
+            >
+              取消
+            </button>
+          )}
 
-        {task.status === 'conflict' && !resolveInProgress && (
-          <>
-            <label className="task-card-resolve">
-              解决 Agent
-              <select
-                aria-label="选择解决 Agent"
-                value={resolveAgentId}
-                onChange={(event) => setResolveAgentId(event.target.value)}
+          {task.status === 'conflict' && !resolveInProgress && (
+            <>
+              <label className="task-card-resolve">
+                解决 Agent
+                <select
+                  aria-label="选择解决 Agent"
+                  value={resolveAgentId}
+                  onChange={(event) => setResolveAgentId(event.target.value)}
+                >
+                  <option value="">选择 Agent</option>
+                  {enabledAgents.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="task-card-button task-card-button-primary"
+                disabled={resolveAgentId === '' || pendingAction !== null}
+                onClick={() =>
+                  void runAction('create-resolve', () =>
+                    createResolveTask(task.id, resolveAgentId)
+                  )
+                }
               >
-                <option value="">选择 Agent</option>
-                {enabledAgents.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+                指派 Agent 解决
+              </button>
+              <button
+                type="button"
+                className="task-card-button"
+                disabled={pendingAction !== null}
+                onClick={handleOpenWorktree}
+              >
+                打开 worktree
+              </button>
+              <button
+                type="button"
+                className="task-card-button"
+                disabled={pendingAction !== null}
+                onClick={() => void runAction('mark-resolved', () => markTaskResolved(task.id))}
+              >
+                标记已解决并重新合并
+              </button>
+            </>
+          )}
+
+          {task.status === 'awaiting_approval' && (
             <button
               type="button"
               className="task-card-button task-card-button-primary"
-              disabled={resolveAgentId === '' || pendingAction !== null}
-              onClick={() =>
-                void runAction('create-resolve', () =>
-                  createResolveTask(task.id, resolveAgentId)
-                )
-              }
-            >
-              指派 Agent 解决
-            </button>
-            <button
-              type="button"
-              className="task-card-button"
               disabled={pendingAction !== null}
-              onClick={handleOpenWorktree}
+              onClick={() => void runAction('approve-merge', () => approveMerge(task.id))}
             >
-              打开 worktree
-            </button>
-            <button
-              type="button"
-              className="task-card-button"
-              disabled={pendingAction !== null}
-              onClick={() => void runAction('mark-resolved', () => markTaskResolved(task.id))}
-            >
-              标记已解决并重新合并
-            </button>
-          </>
-        )}
-
-        {task.status === 'awaiting_approval' && (
-          <button
-            type="button"
-            className="task-card-button task-card-button-primary"
-            disabled={pendingAction !== null}
-            onClick={() => void runAction('approve-merge', () => approveMerge(task.id))}
-          >
-            继续合并
-          </button>
-        )}
-
-        {RETRYABLE.has(task.status) && (
-          <button
-            type="button"
-            className="task-card-button task-card-button-primary"
-            disabled={pendingAction !== null}
-            onClick={() => void runAction('retry', () => retryTask(task.id))}
-          >
-            重试
-          </button>
-        )}
-
-        {!resolveInProgress &&
-          (task.status === 'conflict' ||
-            task.status === 'awaiting_approval' ||
-            RETRYABLE.has(task.status)) && (
-            <button
-              type="button"
-              className="task-card-button task-card-button-danger"
-              disabled={pendingAction !== null}
-              onClick={() => void runAction('abandon', () => abandonTask(task.id))}
-            >
-              放弃
+              继续合并
             </button>
           )}
 
-        <button
-          type="button"
-          className="task-card-button task-card-log-toggle"
-          onClick={() => void handleToggleLog()}
-        >
-          {logOpen ? '收起日志' : '展开日志'}
-        </button>
-      </div>
+          {RETRYABLE.has(task.status) && (
+            <button
+              type="button"
+              className="task-card-button task-card-button-primary"
+              disabled={pendingAction !== null}
+              onClick={() => void runAction('retry', () => retryTask(task.id))}
+            >
+              重试
+            </button>
+          )}
 
-      {logOpen && (
-        <div className="task-card-log">
-          {logLoading && <p className="task-card-empty">正在读取日志…</p>}
-          {logError !== null && (
-            <p className="task-card-error" role="alert">
-              {logError}
-            </p>
-          )}
-          {!logLoading && logError === null && (
-            <pre className="task-card-log-content" data-testid="task-log">
-              {log === null || log === '' ? '暂无日志' : log}
-            </pre>
-          )}
+          {!resolveInProgress &&
+            (task.status === 'conflict' ||
+              task.status === 'awaiting_approval' ||
+              RETRYABLE.has(task.status)) && (
+              <button
+                type="button"
+                className="task-card-button task-card-button-danger"
+                disabled={pendingAction !== null}
+                onClick={() => void runAction('abandon', () => abandonTask(task.id))}
+              >
+                放弃
+              </button>
+            )}
         </div>
       )}
     </section>
