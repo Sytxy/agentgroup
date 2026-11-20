@@ -105,6 +105,11 @@ export default function App(): React.JSX.Element {
   const [agentPanelOpen, setAgentPanelOpen] = useState(false)
   const [userName, setUserName] = useState(readUserName)
   const [copyNotice, setCopyNotice] = useState<string | null>(null)
+  // 点击 Agent 消息的“回复”后，向输入框预填 @成员
+  const [composerSeed, setComposerSeed] = useState<{
+    text: string
+    nonce: number
+  } | null>(null)
 
   // 挂载时加载工作区列表，存在工作区则默认选中第一个
   useEffect(() => {
@@ -499,8 +504,19 @@ export default function App(): React.JSX.Element {
               userName={userName}
               progress={progress}
               activeResolveByParent={activeResolveByParent}
+              onReply={(agentName) =>
+                setComposerSeed({
+                  text: `@${agentName} `,
+                  nonce: Date.now()
+                })
+              }
             />
-            <Composer agents={agents} userName={userName} onSend={handleSend} />
+            <Composer
+              agents={agents}
+              userName={userName}
+              seed={composerSeed}
+              onSend={handleSend}
+            />
           </section>
 
           {agentPanelOpen && (

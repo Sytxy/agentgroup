@@ -38,6 +38,19 @@ describe('消息输入框', () => {
     expect(screen.getByText('以「张三」的身份发送')).toBeInTheDocument()
   })
 
+  test('applies a reply seed to the input', async () => {
+    render(
+      <Composer
+        agents={[]}
+        seed={{ text: '@claude ', nonce: 1 }}
+        onSend={vi.fn().mockResolvedValue(undefined)}
+      />
+    )
+
+    const input = screen.getByRole('textbox', { name: '消息输入' })
+    await waitFor(() => expect(input).toHaveValue('@claude '))
+  })
+
   test('typing @ shows enabled agents and inserts the selected name', () => {
     render(
       <Composer

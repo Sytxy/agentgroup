@@ -19,6 +19,8 @@ interface ChatTimelineProps {
    * 冲突卡片据此隐藏会并发操作同一 worktree 的按钮。
    */
   activeResolveByParent?: Map<string, Task>
+  /** 点击 Agent 消息的“回复”时，把 @成员 预填到输入框。 */
+  onReply?: (agentName: string) => void
 }
 
 export default function ChatTimeline({
@@ -27,7 +29,8 @@ export default function ChatTimeline({
   agents,
   userName = '我',
   progress = {},
-  activeResolveByParent = new Map<string, Task>()
+  activeResolveByParent = new Map<string, Task>(),
+  onReply
 }: ChatTimelineProps): React.JSX.Element {
   const listRef = useRef<HTMLDivElement>(null)
   const agentNames = new Map(agents.map((agent) => [agent.id, agent.name]))
@@ -39,6 +42,24 @@ export default function ChatTimeline({
   for (const message of messages) {
     if (message.taskId !== null && isAgentReply(message)) {
       lastReplyByTask.set(message.taskId, message.id)
+    }
+  }
+
+  // 任务首次出现前的最后一条用户消息，用作 Agent 回复上方的引用。
+  const quotedUserByTask = new Map<string, ChatMessage>()
+  let lastUserMessage: ChatMessage | undefined
+  for (const message of messages) {
+    if (message.kind === 'user') {
+      lastUserMessage = message
+      continue
+    }
+    if (
+      message.kind === 'task-card' &&
+      message.taskId !== null &&
+      lastUserMessage !== undefined &&
+      !quotedUserByTask.has(message.taskId)
+    ) {
+      quotedUserByTask.set(message.taskId, lastUserMessage)
     }
   }
 
@@ -105,7 +126,7 @@ export default function ChatTimeline({
                     <span className="message-author">
                       {taskAgent?.name ?? '已删除的成员'}
                     </span>
-                    <span className="message-context">你的智能体</span>
+                    <span className="message-context">你的 agent</span>
                     {taskAgent !== undefined && (
                       <span className="message-badge">{presetLabel(taskAgent)}</span>
                     )}
@@ -140,6 +161,8 @@ export default function ChatTimeline({
                 lastReplyByTask.get(message.taskId) === message.id
                   ? task
                   : undefined
+              const quotedUser =
+                inlineTask === undefined ? undefined : quotedUserByTask.get(inlineTask.id)
 
               return (
                 <article
@@ -156,14 +179,31 @@ export default function ChatTimeline({
                       {agentInitial(authorAgent?.name ?? authorName)}
                     </span>
                     <span className="message-author">{authorName}</span>
-                    <span className="message-context">你的智能体</span>
+                    <span className="message-context">你的 agent</span>
                     {authorAgent !== undefined && (
                       <span className="message-badge">{presetLabel(authorAgent)}</span>
                     )}
                     <span className="message-time">
                       {formatMessageTime(message.createdAt)}
                     </span>
+                    {onReply !== undefined && (
+                      <button
+                        type="button"
+                        className="message-reply-action"
+                        onClick={() => onReply(authorName)}
+                      >
+                        ↩ 回复
+                      </button>
+                    )}
                   </div>
+
+                  {quotedUser !== undefined && (
+                    <div className="message-reply-quote">
+                      <span className="message-reply-author">{userName}:</span>{' '}
+                      <span className="message-reply-text">{quotedUser.content}</span>
+                    </div>
+                  )}
+
                   <MessageContent text={message.content} />
                   {inlineTask !== undefined && (
                     <TaskCard
@@ -214,20 +254,19 @@ export default function ChatTimeline({
                 className="message message-user"
                 data-testid="message-user"
               >
-                <div className="message-head">
-                  <span className="message-avatar message-avatar-user" aria-hidden="true">
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <circle cx="12" cy="8" r="4" />
-                      <path d="M4.5 20.5c0-4 3.4-6.5 7.5-6.5s7.5 2.5 7.5 6.5" />
-                    </svg>
-                  </span>
+                <div className="message-head message-head-user">
                   <span className="message-author">{userName}</span>
-                  <span className="message-context">你</span>
+                  <span className="message-user-badge">你</span>
                   <span className="message-time">
                     {formatMessageTime(message.createdAt)}
                   </span>
+                  <span className="message-avatar message-avatar-user" aria-hidden="true">
+                    {agentInitial(userName)}
+                  </span>
                 </div>
-                <MessageContent text={message.content} />
+                <div className="message-user-bubble">
+                  <MessageContent text={message.content} />
+                </div>
               </article>
             )
           })

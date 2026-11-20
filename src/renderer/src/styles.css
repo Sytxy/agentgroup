@@ -726,18 +726,22 @@ select:focus-visible {
 }
 
 .message-avatar-user {
-  background: var(--accent);
+  background: #8a3b34;
   color: #ffffff;
 }
 
-.message-avatar-user svg {
-  width: 15px;
-  height: 15px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 2;
+.message-head-user {
+  justify-content: flex-end;
+}
+
+.message-user-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--on-primary);
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1.5;
 }
 
 .message-author {
@@ -768,7 +772,38 @@ select:focus-visible {
   white-space: nowrap;
 }
 
-.message-user,
+.message-user {
+  align-self: flex-end;
+  align-items: flex-end;
+  max-width: 76%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+}
+
+.message-user .message-author {
+  color: var(--ink-soft);
+}
+
+.message-user-bubble {
+  max-width: 100%;
+  padding: 10px 14px 11px;
+  border-radius: 18px;
+  background: var(--ok-soft);
+  color: var(--ink);
+}
+
+.message-user-bubble .message-rich {
+  font-size: 0.88rem;
+  line-height: 1.65;
+}
+
+.message-user-bubble .message-mention {
+  color: var(--blue);
+}
+
 .message-agent {
   align-self: stretch;
   max-width: 100%;
@@ -779,8 +814,42 @@ select:focus-visible {
   color: var(--ink);
 }
 
-.message-user .message-author {
+.message-reply-action {
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--faint);
+  font-size: 0.66rem;
+  cursor: pointer;
+}
+
+.message-reply-action:hover {
+  color: var(--accent-strong);
+}
+
+.message-reply-quote {
+  max-width: 86%;
+  padding: 8px 10px;
+  border-left: 2px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--card-soft);
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+.message-reply-author {
   color: var(--ink-soft);
+  font-weight: 600;
+}
+
+.message-reply-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .message-system {

@@ -8,6 +8,8 @@ interface ComposerProps {
   disabled?: boolean
   /** 发送者显示名，用于“以谁的身份发送”。 */
   userName?: string
+  /** 外部触发的预填内容；nonce 变化时重新应用。 */
+  seed?: { text: string; nonce: number } | null
   onSend: (text: string) => Promise<void>
 }
 
@@ -36,6 +38,7 @@ export default function Composer({
   agents,
   disabled = false,
   userName = '我',
+  seed = null,
   onSend
 }: ComposerProps): React.JSX.Element {
   const [value, setValue] = useState('')
@@ -59,6 +62,18 @@ export default function Composer({
     }
     pendingCaret.current = null
   }, [value])
+
+  // “回复”按钮预填 @成员：写入正文、把光标放到末尾并聚焦输入框
+  useEffect(() => {
+    if (seed === null) {
+      return
+    }
+    setValue(seed.text)
+    setCaret(seed.text.length)
+    setCompletionDismissed(false)
+    setError(null)
+    requestAnimationFrame(() => textareaRef.current?.focus())
+  }, [seed])
 
   // 输入框随内容增高，最多 180px；避免固定行高留下大片空白或出现 resize 手柄。
   useEffect(() => {

@@ -142,7 +142,7 @@ describe('群聊时间线', () => {
     // Agent 消息展示成员名而不是 id
     const agentMessage = screen.getByTestId('message-agent')
     expect(agentMessage).toHaveTextContent('claude')
-    expect(agentMessage).toHaveTextContent('你的智能体')
+    expect(agentMessage).toHaveTextContent('你的 agent')
     expect(agentMessage).toHaveTextContent('收到，开始处理')
     expect(user).toHaveTextContent('你')
   })
@@ -170,6 +170,7 @@ describe('群聊时间线', () => {
   test('任务卡跟随 Agent 长回复展示，并隐藏重复的短状态', () => {
     const longReply =
       '我是负责本工作区的执行代理。\n\n当前情况：\n- 工作区干净\n- 分支 agent/task\n\n请告诉我需要做什么。'
+    const onReply = vi.fn()
     render(
       <ChatTimeline
         messages={[
@@ -182,6 +183,7 @@ describe('群聊时间线', () => {
         ]}
         tasks={[task('t1', 'merged')]}
         agents={[agent('a1', 'claude')]}
+        onReply={onReply}
       />
     )
 
@@ -195,6 +197,10 @@ describe('群聊时间线', () => {
     const agentMessage = screen.getByTestId('message-agent')
     expect(agentMessage).toHaveTextContent('claude')
     expect(agentMessage).toHaveTextContent('我是负责本工作区')
+    // 引用用户原消息，并提供回复入口
+    expect(agentMessage).toHaveTextContent('@claude 你是谁？')
+    fireEvent.click(within(agentMessage).getByRole('button', { name: /回复/ }))
+    expect(onReply).toHaveBeenCalledWith('claude')
     const inlineCard = within(agentMessage).getByTestId('task-card')
     expect(inlineCard).toHaveClass('task-card-inline')
     expect(inlineCard).toHaveTextContent('已合并')
