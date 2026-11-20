@@ -55,6 +55,8 @@ export interface TaskManagerDeps {
   onAbandon?: (taskId: string) => Promise<void>
   /** 集成 worktree 路径；默认与 WorkspaceService 的约定一致，崩溃恢复时用于中止残留合并 */
   integrationWorktreePath?: (workspaceId: string) => string
+  /** Agent 连续无输出多久后判定为卡死；默认 15 分钟，仅供测试注入更短值 */
+  idleTimeoutMs?: number
 }
 
 interface RunningTask {
@@ -80,6 +82,7 @@ export class TaskManager {
   private readonly onApproveMerge?: (taskId: string) => Promise<void>
   private readonly onAbandon?: (taskId: string) => Promise<void>
   private readonly integrationWorktreePath: (workspaceId: string) => string
+  private readonly idleTimeoutMs: number
 
   /** 正在运行的任务，value 持有取消信号与完成 Promise */
   private readonly running = new Map<string, RunningTask>()
@@ -110,6 +113,7 @@ export class TaskManager {
     this.integrationWorktreePath =
       deps.integrationWorktreePath ??
       ((workspaceId) => join(this.worktreesRoot, workspaceId, 'integration'))
+    this.idleTimeoutMs = deps.idleTimeoutMs ?? 15 * 60_000
   }
 
   /** 启动调度：应用启动时调用一次，接管数据库中已存在的排队任务 */
@@ -576,7 +580,21 @@ export class TaskManager {
 
     let summary: string | null = null
     let timedOut = false
+    let stalled = false
     let lastProgressMessageAt: number | null = null
+    // 任务总超时之外再加一层“无输出”保护：网络命令挂住时 Agent 可能几十分钟
+    // 不再产生任何事件，总超时要等 60 分钟才知道失败。
+    let idleTimer: NodeJS.Timeout | undefined
+    const resetIdleTimer = (): void => {
+      if (idleTimer !== undefined) {
+        clearTimeout(idleTimer)
+      }
+      idleTimer = setTimeout(() => {
+        stalled = true
+        controller.abort()
+      }, this.idleTimeoutMs)
+    }
+    resetIdleTimer()
     // 超时只覆盖 Agent 运行阶段；setup 时间不计入任务超时
     const timeoutTimer = setTimeout(() => {
       timedOut = true
@@ -595,6 +613,7 @@ export class TaskManager {
         cwd: worktreePath,
         signal: controller.signal
       })) {
+        resetIdleTimer()
         if (event.type === 'log') {
           await writer.append(`${event.text}\n`)
           continue
@@ -638,6 +657,13 @@ export class TaskManager {
         )
       } else if (this.cancelRequested.has(task.id)) {
         this.finish(task, 'cancelled', '任务已取消', exitCodeOf(error))
+      } else if (stalled) {
+        this.finish(
+          task,
+          'failed',
+          `任务长时间无输出（超过 ${Math.max(1, Math.round(this.idleTimeoutMs / 60_000))} 分钟），已终止`,
+          exitCodeOf(error)
+        )
       } else {
         // CLI 未登录时原始输出只有 “Not logged in · Please run /login” 一类的英文，
         // 统一转成可执行的登录提示；其他失败仍保留原始错误便于排查。
@@ -645,6 +671,9 @@ export class TaskManager {
       }
     } finally {
       clearTimeout(timeoutTimer)
+      if (idleTimer !== undefined) {
+        clearTimeout(idleTimer)
+      }
     }
   }
 

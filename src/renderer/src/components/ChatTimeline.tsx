@@ -95,6 +95,14 @@ export default function ChatTimeline({
     }
   }
 
+  // 每个任务最后一条消息的时间，用于判断运行中的任务是否长时间没有新输出。
+  const lastActivityByTask = new Map<string, string>()
+  for (const message of messages) {
+    if (message.taskId !== null) {
+      lastActivityByTask.set(message.taskId, message.createdAt)
+    }
+  }
+
   // 新消息到达时滚到底部，保证用户始终看到最新一条
   useEffect(() => {
     const list = listRef.current
@@ -179,6 +187,7 @@ export default function ChatTimeline({
                   </div>
                   <TaskStatusLine
                     task={task}
+                    lastActivityAt={lastActivityByTask.get(task.id)}
                     blockingAgentName={
                       blockingTask === undefined
                         ? undefined
@@ -472,10 +481,12 @@ function presetLabel(agent: AgentConfig): string {
 /** 没有最终 Agent 回复时，任务行的正文显示当前状态或已有摘要。 */
 function TaskStatusLine({
   task,
-  blockingAgentName
+  blockingAgentName,
+  lastActivityAt
 }: {
   task: Task
   blockingAgentName?: string
+  lastActivityAt?: string
 }): React.JSX.Element {
   const live =
     task.status === 'running' || task.status === 'preparing' || task.status === 'merging'
@@ -493,7 +504,9 @@ function TaskStatusLine({
   return (
     <div className="task-status-line">
       {live && <span className="task-active-dot" aria-hidden="true" />}
-      <MessageContent text={taskStatusText(task, now, blockingAgentName)} />
+      <MessageContent
+        text={taskStatusText(task, now, blockingAgentName, lastActivityAt)}
+      />
     </div>
   )
 }
@@ -501,23 +514,26 @@ function TaskStatusLine({
 function taskStatusText(
   task: Task,
   now: number = Date.now(),
-  blockingAgentName?: string
+  blockingAgentName?: string,
+  lastActivityAt?: string
 ): string {
   if (task.summary !== null && task.summary !== '') {
     return task.summary
   }
   const elapsed = elapsedText(task, now)
+  const lastActivity =
+    lastActivityAt === undefined ? '' : ` · 最后活动 ${agoText(lastActivityAt, now)}`
   switch (task.status) {
     case 'queued':
       return blockingAgentName === undefined
         ? '排队中…'
         : `排队中… 等待 ${blockingAgentName} 完成当前任务`
     case 'preparing':
-      return `正在准备环境…${elapsed}`
+      return `正在准备环境…${elapsed}${lastActivity}`
     case 'running':
-      return `正在执行…${elapsed}`
+      return `正在执行…${elapsed}${lastActivity}`
     case 'merging':
-      return `正在合并…${elapsed}`
+      return `正在合并…${elapsed}${lastActivity}`
     case 'merged':
       return '无代码改动'
     case 'done':
@@ -557,6 +573,23 @@ function elapsedText(task: Task, now: number): string {
   }
   const hours = Math.floor(minutes / 60)
   return ` 已运行 ${hours}h ${minutes % 60}m`
+}
+
+function agoText(iso: string, now: number): string {
+  const at = Date.parse(iso)
+  if (!Number.isFinite(at)) {
+    return '未知'
+  }
+  const seconds = Math.max(0, Math.floor((now - at) / 1000))
+  if (seconds < 60) {
+    return `${seconds}s 前`
+  }
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) {
+    return `${minutes}m 前`
+  }
+  const hours = Math.floor(minutes / 60)
+  return `${hours}h 前`
 }
 
 function formatMessageTime(iso: string): string {

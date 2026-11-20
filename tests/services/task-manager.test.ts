@@ -106,7 +106,10 @@ function insertTask(overrides: Partial<Task> = {}): Task {
   return task
 }
 
-function createManager(adapter: AgentAdapter): TaskManager {
+function createManager(
+  adapter: AgentAdapter,
+  overrides: Partial<ConstructorParameters<typeof TaskManager>[0]> = {}
+): TaskManager {
   let manager!: TaskManager
   const factory = new TaskFactory({
     tasks,
@@ -125,7 +128,8 @@ function createManager(adapter: AgentAdapter): TaskManager {
     events,
     factory,
     worktreesRoot,
-    logsRoot
+    logsRoot,
+    ...overrides
   })
   return manager
 }
@@ -481,6 +485,30 @@ describe('TaskManager', () => {
     expect(adapter.active).toBe(0)
     // 两个适配器都在等待 5 秒；cancelAll 应在取消信号后立即返回
     expect(elapsed).toBeLessThan(3000)
+  })
+
+  test('a task with no agent output for the idle timeout fails', async () => {
+    insertAgent()
+    const adapter = new FakeAdapter({
+      run: (_cwd, signal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener(
+            'abort',
+            () => reject(new Error('aborted')),
+            { once: true }
+          )
+        })
+    })
+    const task = insertTask({ title: 'Stalled' })
+
+    const manager = createManager(adapter, { idleTimeoutMs: 100 })
+    manager.start()
+    await waitFor(() => tasks.get(task.id)?.status === 'failed')
+
+    const stored = tasks.get(task.id) as Task
+    expect(stored.summary).toContain('长时间无输出')
+    expect(adapter.runs[0]?.signal.aborted).toBe(true)
+    expect(adapter.active).toBe(0)
   })
 
   test('adapter failure marks the task failed with its message', async () => {
